@@ -1,6 +1,5 @@
-import * as vscode from 'vscode';
+﻿import * as vscode from 'vscode';
 import { SnoozeService } from '../services/snoozeService';
-import { ServerConfigService } from '../services/serverConfigService';
 
 interface QuickActionItem extends vscode.QuickPickItem {
   action: string;
@@ -11,33 +10,22 @@ interface StatusInfo {
   enabled: boolean;
   isSnoozing: boolean;
   snoozeRemaining: number;
-  hasServerConfig: boolean;
-  serverConfigAge?: number;
 }
 
-/**
- * Menu panel shown when clicking the status bar
- * Provides quick actions for Cometix Tab
- */
 export class MenuPanel {
   private snoozeService: SnoozeService;
-  private serverConfigService: ServerConfigService;
 
   constructor() {
     this.snoozeService = SnoozeService.getInstance();
-    this.serverConfigService = ServerConfigService.getInstance();
   }
 
-  /**
-   * Show the menu panel as a QuickPick
-   */
   async show(): Promise<void> {
     const statusInfo = this.getStatusInfo();
     const items = this.buildMenuItems(statusInfo);
 
     const quickPick = vscode.window.createQuickPick<QuickActionItem>();
     quickPick.items = items;
-    quickPick.title = 'Cometix Tab';
+    quickPick.title = 'SukiTab';
     quickPick.placeholder = 'Select an action...';
 
     quickPick.onDidAccept(async () => {
@@ -53,22 +41,19 @@ export class MenuPanel {
   }
 
   private getStatusInfo(): StatusInfo {
-    const config = vscode.workspace.getConfiguration('cometixTab');
+    const config = vscode.workspace.getConfiguration('sukiTab');
     const enabled = config.get<boolean>('enabled', true);
 
     return {
       enabled,
       isSnoozing: this.snoozeService.isSnoozing(),
-      snoozeRemaining: this.snoozeService.getRemainingMinutes(),
-      hasServerConfig: this.serverConfigService.hasConfig(),
-      serverConfigAge: this.serverConfigService.getTimeSinceLastFetch()
+      snoozeRemaining: this.snoozeService.getRemainingMinutes()
     };
   }
 
   private buildMenuItems(statusInfo: StatusInfo): QuickActionItem[] {
     const items: QuickActionItem[] = [];
 
-    // Header - current status (separators don't support icons)
     items.push({
       label: 'Current Status',
       description: this.getStatusDescription(statusInfo),
@@ -76,7 +61,6 @@ export class MenuPanel {
       kind: vscode.QuickPickItemKind.Separator
     } as any);
 
-    // Toggle enabled
     const toggleIcon = statusInfo.enabled ? '$(circle-filled)' : '$(circle-outline)';
     const toggleText = statusInfo.enabled ? 'Disable Completions' : 'Enable Completions';
     items.push({
@@ -85,7 +69,6 @@ export class MenuPanel {
       action: 'toggleEnabled'
     });
 
-    // Snooze controls
     if (statusInfo.isSnoozing) {
       items.push({
         label: '$(bell) Cancel Snooze',
@@ -100,50 +83,49 @@ export class MenuPanel {
       });
     }
 
-    // Separator
     items.push({
       label: '',
       kind: vscode.QuickPickItemKind.Separator
     } as any);
 
-    // Server config
-    if (statusInfo.hasServerConfig) {
-      items.push({
-        label: '$(server) View Server Configuration',
-        description: `Fetched ${statusInfo.serverConfigAge}s ago`,
-        action: 'showServerConfig'
-      });
-    } else {
-      items.push({
-        label: '$(server) Server Configuration',
-        description: 'Not yet fetched',
-        action: 'showServerConfig'
-      });
-    }
-
-    // Endpoint settings
     items.push({
-      label: '$(globe) Select Endpoint Mode',
-      description: 'Change API endpoint',
-      action: 'selectEndpointMode'
+      label: '$(server) Select AI Provider',
+      description: 'Choose your AI provider',
+      action: 'selectProvider'
     });
 
     items.push({
-      label: '$(location) Select Region',
-      description: 'Change server region',
-      action: 'selectRegion'
+      label: '$(beaker) Select Model',
+      description: 'Choose AI model',
+      action: 'selectModel'
     });
 
-    // Separator
+    items.push({
+      label: '$(plug) Test Connection',
+      description: 'Verify provider connection',
+      action: 'testConnection'
+    });
+
+    items.push({
+      label: '$(file) Open Config File',
+      description: 'Edit configuration',
+      action: 'openConfigFile'
+    });
+
+    items.push({
+      label: '$(file-add) Create Default Config',
+      description: 'Generate default configuration',
+      action: 'createDefaultConfig'
+    });
+
     items.push({
       label: '',
       kind: vscode.QuickPickItemKind.Separator
     } as any);
 
-    // Tools
     items.push({
       label: '$(settings-gear) Open Settings',
-      description: 'Configure Cometix Tab',
+      description: 'Configure SukiTab',
       action: 'openSettings'
     });
 
@@ -151,12 +133,6 @@ export class MenuPanel {
       label: '$(output) Show Logs',
       description: 'View output logs',
       action: 'showLogs'
-    });
-
-    items.push({
-      label: '$(refresh) Refresh Server Config',
-      description: 'Fetch latest server configuration',
-      action: 'refreshConfig'
     });
 
     return items;
@@ -178,39 +154,43 @@ export class MenuPanel {
         break;
 
       case 'toggleEnabled':
-        await vscode.commands.executeCommand('cometix-tab.toggleEnabled');
+        await vscode.commands.executeCommand('suki-tab.toggleEnabled');
         break;
 
       case 'cancelSnooze':
-        await vscode.commands.executeCommand('cometix-tab.cancelSnooze');
+        await vscode.commands.executeCommand('suki-tab.cancelSnooze');
         break;
 
       case 'showSnoozePicker':
-        await vscode.commands.executeCommand('cometix-tab.showSnoozePicker');
+        await vscode.commands.executeCommand('suki-tab.showSnoozePicker');
         break;
 
-      case 'showServerConfig':
-        await vscode.commands.executeCommand('cometix-tab.showServerConfig');
+      case 'selectProvider':
+        await vscode.commands.executeCommand('suki-tab.selectProvider');
         break;
 
-      case 'selectEndpointMode':
-        await vscode.commands.executeCommand('cometix-tab.selectEndpointMode');
+      case 'selectModel':
+        await vscode.commands.executeCommand('suki-tab.selectModel');
         break;
 
-      case 'selectRegion':
-        await vscode.commands.executeCommand('cometix-tab.selectRegion');
+      case 'testConnection':
+        await vscode.commands.executeCommand('suki-tab.testConnection');
+        break;
+
+      case 'openConfigFile':
+        await vscode.commands.executeCommand('suki-tab.openConfigFile');
+        break;
+
+      case 'createDefaultConfig':
+        await vscode.commands.executeCommand('suki-tab.createDefaultConfig');
         break;
 
       case 'openSettings':
-        await vscode.commands.executeCommand('workbench.action.openSettings', 'cometixTab');
+        await vscode.commands.executeCommand('suki-tab.openSettings');
         break;
 
       case 'showLogs':
-        await vscode.commands.executeCommand('cometix-tab.showLogs');
-        break;
-
-      case 'refreshConfig':
-        await vscode.commands.executeCommand('cometix-tab.refreshAutoEndpoint');
+        await vscode.commands.executeCommand('suki-tab.showLogs');
         break;
 
       default:
@@ -219,9 +199,6 @@ export class MenuPanel {
   }
 }
 
-/**
- * Show snooze duration picker
- */
 export async function showSnoozePicker(): Promise<void> {
   const snoozeService = SnoozeService.getInstance();
   
@@ -240,6 +217,6 @@ export async function showSnoozePicker(): Promise<void> {
 
   if (selected) {
     snoozeService.snooze(selected.minutes);
-    vscode.window.showInformationMessage(`Cometix Tab: Snoozed for ${selected.minutes} minutes`);
+    vscode.window.showInformationMessage(`SukiTab: Snoozed for ${selected.minutes} minutes`);
   }
 }

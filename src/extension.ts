@@ -1,282 +1,197 @@
-import * as vscode from 'vscode';
+﻿import * as vscode from 'vscode';
 import { ServiceContainer } from './container/serviceContainer';
 import { Logger } from './services/logger';
 import { DocumentTracker } from './services/documentTracker';
-import { RpcClient } from './services/rpcClient';
-import { CursorStateMachine } from './services/cursorStateMachine';
-import { ConfigService } from './services/configService';
-import { FileSyncCoordinator } from './services/fileSyncCoordinator';
+import { CompletionStateMachine } from './services/completionStateMachine';
+import { ConfigManager } from './services/configManager';
+import { OpenAIClient } from './api/openAIClient';
+import { PredictionController } from './controllers/predictionController';
 import { registerInlineCompletionProvider } from './providers/inlineCompletionProvider';
 import { registerInlineAcceptCommand } from './commands/inlineAcceptCommand';
-import { CursorPredictionController } from './controllers/cursorPredictionController';
-import { FilesyncUpdatesStore } from './services/filesyncUpdatesStore';
-import { registerNextEditCommand } from './commands/nextEditCommand';
-import { registerCursorPredictionCommand } from './commands/cursorPredictionCommand';
-import { registerEndpointCommands } from './commands/endpointCommands';
+import { registerProviderCommands } from './commands/providerCommands';
 import { registerModelCommands } from './commands/modelCommands';
-// New services for enhanced functionality
 import { DebounceManager } from './services/debounceManager';
 import { RecentFilesTracker } from './services/recentFilesTracker';
 import { TelemetryService } from './services/telemetryService';
 import { LspSuggestionsTracker } from './services/lspSuggestionsTracker';
-import { WorkspaceStorage } from './services/workspaceStorage';
 import { DiagnosticsTracker } from './services/diagnosticsTracker';
-import { EndpointManager } from './services/endpointManager';
 import { TriggerSource } from './context/types';
-// UI components
-import { StatusBar } from './ui/statusBar';
-import { StatusBarPicker } from './ui/statusBarPicker';
-import { showSnoozePicker } from './ui/menuPanel';
 import { SnoozeService } from './services/snoozeService';
-import { ServerConfigService } from './services/serverConfigService';
 import { ensureProposedApiEnabled, resetIgnoreProposalCheck, checkAndPromptProposedApiOnStartup } from './services/productJsonPatcher';
+import { StatusBar, StatusBarState } from './ui/statusBar';
+import { SettingsPanel } from './ui/settingsPanel';
+import { StatusBarPicker } from './ui/statusBarPicker';
 
 export async function activate(context: vscode.ExtensionContext) {
-	// ========== 最优先：检查 Proposed API 是否可用 ==========
-	// 必须在任何使用 proposed API 的代码之前执行
-	const extensionId = 'Haleclipse.cometix-tab';
+	const extensionId = 'Okysu.suki-tab';
 	const requiredProposals = ['inlineCompletionsAdditions'];
-	
+
 	const canActivate = await ensureProposedApiEnabled(context, extensionId, requiredProposals);
-	if (!canActivate) {
-		// 用户选择稍后提醒或修改 product.json 后会重启，停止激活
-		return;
-	}
-	// ========== Proposed API 检查完成 ==========
+	if (!canActivate) {return;}
+
 	const container = new ServiceContainer(context);
 
 	container.registerSingleton('logger', () => new Logger());
 	container.registerSingleton('tracker', () => new DocumentTracker());
-	container.registerSingleton('endpointManager', () => new EndpointManager(context));
-	container.registerSingleton('rpcClient', (c) => new RpcClient(c.resolve('logger'), c.resolve('endpointManager')));
-	container.registerSingleton('config', () => new ConfigService());
-	container.registerSingleton('fileSyncUpdates', (c) => new FilesyncUpdatesStore(c.resolve('logger')));
-	container.registerSingleton('fileSync', (c) => new FileSyncCoordinator(
-		c.resolve('rpcClient'),
-		c.resolve('logger'),
-		c.resolve('fileSyncUpdates')
-	));
-	
-	// New services for cursor-style functionality
+	container.registerSingleton('configManager', () => new ConfigManager(context));
 	container.registerSingleton('debounceManager', (c) => new DebounceManager(c.resolve('logger')));
 	container.registerSingleton('recentFilesTracker', (c) => new RecentFilesTracker(c.resolve('logger')));
 	container.registerSingleton('telemetryService', (c) => new TelemetryService(c.resolve('logger')));
 	container.registerSingleton('lspSuggestionsTracker', (c) => new LspSuggestionsTracker(c.resolve('logger')));
 	container.registerSingleton('diagnosticsTracker', (c) => new DiagnosticsTracker(c.resolve('logger')));
-	// Workspace storage for persisting workspaceId and controlToken
-	container.registerSingleton('workspaceStorage', () => new WorkspaceStorage(context));
-	
-	container.registerSingleton('cursorStateMachine', (c) =>
-		new CursorStateMachine(
+
+	const logger = container.resolve<Logger>('logger');
+	const configManager = container.resolve<ConfigManager>('configManager');
+
+	let llmClient = new OpenAIClient(configManager.activeProvider);
+
+	container.registerSingleton('predictionController', (c) =>
+		new PredictionController(c.resolve('logger'))
+	);
+
+	const predictionController = container.resolve<PredictionController>('predictionController');
+
+	container.registerSingleton('stateMachine', (c) =>
+		new CompletionStateMachine(
 			c.resolve('tracker'),
-			c.resolve('rpcClient'),
+			llmClient,
 			c.resolve('logger'),
-			c.resolve('config'),
-			c.resolve('fileSync'),
-			c.resolve('cursorPrediction'),
-			// New service dependencies
+			configManager,
+			predictionController,
 			c.resolve('debounceManager'),
 			c.resolve('recentFilesTracker'),
 			c.resolve('telemetryService'),
 			c.resolve('lspSuggestionsTracker'),
-			// Workspace storage for persistent data
-			c.resolve('workspaceStorage')
-		)
-	);
-	container.registerSingleton('cursorPrediction', (c) =>
-		new CursorPredictionController(
-			c.resolve('tracker'),
-			c.resolve('rpcClient'),
-			c.resolve('config'),
-			c.resolve('logger'),
-			c.resolve('fileSync')
 		)
 	);
 
-	const logger = container.resolve<Logger>('logger');
-	const stateMachine = container.resolve<CursorStateMachine>('cursorStateMachine');
-	container.resolve<CursorPredictionController>('cursorPrediction');
+	const stateMachine = container.resolve<CompletionStateMachine>('stateMachine');
 	const diagnosticsTracker = container.resolve<DiagnosticsTracker>('diagnosticsTracker');
 	const lspSuggestionsTracker = container.resolve<LspSuggestionsTracker>('lspSuggestionsTracker');
-
-	// Wire trigger sources to the completion provider
 	const inlineEditTriggerer = stateMachine.getInlineEditTriggerer();
 
-	// LinterErrors: trigger when new errors appear
 	diagnosticsTracker.onNewErrors(({ document, position }) => {
-		logger.info('[Extension] Triggering completion due to new linter errors');
 		inlineEditTriggerer.manualTrigger(document, position, TriggerSource.LinterErrors);
 	});
 
-	// ParameterHints: trigger when signature help appears/changes
 	lspSuggestionsTracker.onParameterHintsChange(({ document, position }) => {
-		logger.info('[Extension] Triggering completion due to parameter hints');
 		inlineEditTriggerer.manualTrigger(document, position, TriggerSource.ParameterHints);
 	});
 
-	// LspSuggestions: trigger when LSP completions are detected
 	lspSuggestionsTracker.onCompletionsAvailable(({ document, position }) => {
-		logger.info('[Extension] Triggering completion due to LSP suggestions');
 		inlineEditTriggerer.manualTrigger(document, position, TriggerSource.LspSuggestions);
 	});
 
 	registerInlineCompletionProvider(stateMachine, logger, context.subscriptions);
 	registerInlineAcceptCommand(stateMachine, logger, context.subscriptions);
-	registerNextEditCommand(stateMachine, logger, context.subscriptions);
-	registerCursorPredictionCommand(logger, context.subscriptions);
 
-	const endpointManager = container.resolve<EndpointManager>('endpointManager');
-	const rpcClient = container.resolve<RpcClient>('rpcClient');
-	
-	// Register endpoint commands
-	const endpointCommandDisposables = registerEndpointCommands(
-		context,
-		endpointManager,
-		() => rpcClient.refreshClient()
-	);
-	context.subscriptions.push(...endpointCommandDisposables);
+	const refreshClient = () => {
+		llmClient.dispose();
+		llmClient = new OpenAIClient(configManager.activeProvider);
+	};
 
-	// Register model commands
-	const modelCommandDisposables = registerModelCommands(context);
+	const providerCommandDisposables = registerProviderCommands(context, configManager, refreshClient);
+	context.subscriptions.push(...providerCommandDisposables);
+
+	const modelCommandDisposables = registerModelCommands(context, configManager);
 	context.subscriptions.push(...modelCommandDisposables);
 
-	// Initialize UI components
-	const snoozeService = SnoozeService.getInstance();
-	const serverConfigService = ServerConfigService.getInstance();
-	const statusBar = new StatusBar();
-	const statusBarPicker = new StatusBarPicker();
-
-	// Get telemetry service from container for UI integration
-	const telemetryService = container.resolve<TelemetryService>('telemetryService');
-	const debounceManager = container.resolve<DebounceManager>('debounceManager');
-
-	// Wire up StatusBar with services
-	statusBar.setTelemetryService(telemetryService);
-	statusBar.setEndpointManager(endpointManager);
-
-	// Wire up StatusBarPicker with services
-	statusBarPicker.setTelemetryService(telemetryService);
-	statusBarPicker.setEndpointManager(endpointManager);
-
-	context.subscriptions.push(snoozeService);
-	context.subscriptions.push(serverConfigService);
-	context.subscriptions.push(statusBar);
-	context.subscriptions.push(statusBarPicker);
-
-	// Register new commands
-	context.subscriptions.push(
-		vscode.commands.registerCommand('cometix-tab.toggleEnabled', async () => {
-			const config = vscode.workspace.getConfiguration('cometixTab');
-			const currentEnabled = config.get<boolean>('enabled', true);
-			await config.update('enabled', !currentEnabled, vscode.ConfigurationTarget.Global);
-			vscode.window.showInformationMessage(
-				`Cometix Tab: ${!currentEnabled ? 'Enabled' : 'Disabled'}`
-			);
-		})
-	);
-
-	context.subscriptions.push(
-		vscode.commands.registerCommand('cometix-tab.showStatusMenu', () => {
-			statusBarPicker.show();
-		})
-	);
-
-	context.subscriptions.push(
-		vscode.commands.registerCommand('cometix-tab.resetStatistics', () => {
-			telemetryService.resetStatistics();
-			vscode.window.showInformationMessage('Cometix Tab: Statistics reset');
-		})
-	);
-
-	context.subscriptions.push(
-		vscode.commands.registerCommand('cometix-tab.showLogs', () => {
-			logger.show();
-		})
-	);
-
-	context.subscriptions.push(
-		vscode.commands.registerCommand('cometix-tab.manualTriggerCompletion', () => {
-			const editor = vscode.window.activeTextEditor;
-			if (editor) {
-				const config = vscode.workspace.getConfiguration('cometixTab');
-				if (!config.get<boolean>('enabled', true)) {
-					vscode.window.showWarningMessage('Cometix Tab is disabled');
-					return;
-				}
-				if (snoozeService.isSnoozing()) {
-					vscode.window.showWarningMessage(`Cometix Tab is snoozed for ${snoozeService.getRemainingMinutes()} more minutes`);
-					return;
-				}
-				inlineEditTriggerer.manualTrigger(editor.document, editor.selection.active, TriggerSource.ManualTrigger);
-				logger.info('[Extension] Manual completion triggered via Alt+\\');
-			}
-		})
-	);
-
-	context.subscriptions.push(
-		vscode.commands.registerCommand('cometix-tab.showSnoozePicker', () => {
-			showSnoozePicker();
-		})
-	);
-
-	context.subscriptions.push(
-		vscode.commands.registerCommand('cometix-tab.cancelSnooze', () => {
-			snoozeService.cancelSnooze();
-			vscode.window.showInformationMessage('Cometix Tab: Snooze cancelled');
-		})
-	);
-
-	context.subscriptions.push(
-		vscode.commands.registerCommand('cometix-tab.showServerConfig', () => {
-			serverConfigService.showConfig();
-		})
-	);
-
-	context.subscriptions.push(
-		vscode.commands.registerCommand('cometix-tab.enableProposedApi', async () => {
-			// Reset ignore state and trigger check
-			await resetIgnoreProposalCheck(context);
-			const extId = 'Haleclipse.cometix-tab';
-			const proposals = ['inlineCompletionsAdditions'];
-			await checkAndPromptProposedApiOnStartup(context, extId, proposals, logger);
-		})
-	);
-
-	// Fetch server config on activation
-	fetchAndCacheServerConfig(rpcClient, serverConfigService, logger);
-	// Apply debounce durations when server config updates
-	serverConfigService.onConfigUpdated((cfg) => {
-		const clientMs = cfg.clientDebounceMs;
-		const globalMs = cfg.globalDebounceMs;
-		if (clientMs !== undefined || globalMs !== undefined) {
-			debounceManager.setDebounceDurations({
-				clientDebounceDuration: clientMs,
-				totalDebounceDuration: globalMs,
-			});
-			logger.info(`[Extension] Updated debounce durations from server config (client=${clientMs ?? '-'}ms, global=${globalMs ?? '-'}ms)`);
-		}
+	configManager.onDidChange(() => {
+		llmClient.updateProvider(configManager.activeProvider);
 	});
 
-	// Note: Proposed API check already done at the start of activate()
+	const snoozeService = SnoozeService.getInstance();
+	const telemetryService = container.resolve<TelemetryService>('telemetryService');
+	const statusBar = new StatusBar(configManager);
+	statusBar.setTelemetryService(telemetryService);
+	stateMachine.onRequestStarted(() => statusBar.setState(StatusBarState.Working));
+	stateMachine.onRequestFinished((success) => statusBar.setState(success ? StatusBarState.Idle : StatusBarState.Idle));
 
-	logger.info('Cometix Tab extension activated');
-}
+	context.subscriptions.push(snoozeService);
+	context.subscriptions.push(statusBar);
 
-/**
- * Fetch CppConfig from server and cache it
- */
-async function fetchAndCacheServerConfig(
-	rpcClient: RpcClient,
-	serverConfigService: ServerConfigService,
-	logger: Logger
-): Promise<void> {
-	try {
-		const response = await rpcClient.getCppConfig();
-		serverConfigService.updateFromResponse(response);
-		logger.info('[Extension] Server config fetched and cached');
-	} catch (err) {
-		logger.warn(`[Extension] Failed to fetch server config: ${err}`);
-	}
+	const statusBarPicker = new StatusBarPicker();
+	statusBarPicker.setConfigManager(configManager);
+	statusBarPicker.setTelemetryService(telemetryService);
+	context.subscriptions.push(statusBarPicker);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('suki-tab.showStatusMenu', () => {
+			statusBarPicker.show();
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('suki-tab.toggleEnabled', async () => {
+			const cfg = vscode.workspace.getConfiguration('sukiTab');
+			const current = cfg.get<boolean>('enabled', true);
+			await cfg.update('enabled', !current, vscode.ConfigurationTarget.Global);
+			vscode.window.setStatusBarMessage(!current ? 'SukiTab: Enabled' : 'SukiTab: Disabled', 2000);
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('suki-tab.showLogs', () => {
+			logger.show();
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('suki-tab.manualTriggerCompletion', () => {
+			const editor = vscode.window.activeTextEditor;
+			if (editor && !snoozeService.isSnoozing()) {
+				inlineEditTriggerer.manualTrigger(editor.document, editor.selection.active, TriggerSource.ManualTrigger);
+			}
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('suki-tab.showSnoozePicker', () => {
+			const items: vscode.QuickPickItem[] = [
+				{ label: 'Snooze 15 min', description: '15' },
+				{ label: 'Snooze 30 min', description: '30' },
+				{ label: 'Snooze 1 hour', description: '60' },
+				{ label: 'Cancel Snooze', description: '0' },
+			];
+			vscode.window.showQuickPick(items, { title: 'Snooze SukiTab' }).then((item) => {
+				if (!item) {return;}
+				const mins = parseInt(item.description ?? '0', 10);
+				if (mins > 0) {
+					snoozeService.snooze(mins);
+				} else {
+					snoozeService.cancelSnooze();
+				}
+			});
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('suki-tab.cancelSnooze', () => {
+			snoozeService.cancelSnooze();
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('suki-tab.enableProposedApi', async () => {
+			await resetIgnoreProposalCheck(context);
+			await checkAndPromptProposedApiOnStartup(context, extensionId, requiredProposals, logger);
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('suki-tab.resetStatistics', () => {
+			telemetryService.resetStatistics();
+			vscode.window.showInformationMessage('SukiTab: Statistics reset');
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('suki-tab.openSettings', () => {
+			SettingsPanel.createOrShow(context.extensionUri, configManager, () => llmClient.testConnection());
+		}),
+	);
+
+	logger.info('SukiTab BYOK extension activated');
 }
 
 export function deactivate() {}

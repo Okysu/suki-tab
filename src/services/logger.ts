@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+﻿import * as vscode from 'vscode';
 import { ILogger } from '../context/contracts';
 
 export enum LogLevel {
@@ -19,7 +19,7 @@ export class Logger implements vscode.Disposable, ILogger {
     if (Logger.instance) {
       this.channel = Logger.instance.channel;
     } else {
-      this.channel = vscode.window.createOutputChannel('Cometix Tab', { log: true });
+      this.channel = vscode.window.createOutputChannel('SukiTab', { log: true });
       Logger.instance = this;
     }
   }

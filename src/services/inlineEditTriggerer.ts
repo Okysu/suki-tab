@@ -50,11 +50,13 @@ interface DocumentChangeInfo {
 export class InlineEditTriggerer implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private readonly documentChanges = new Map<string, DocumentChangeInfo>();
+  private readonly minTriggerIntervalMs = 200;
   
   private config: InlineEditTriggererConfig;
   private lastDocWithSelectionUri: string | undefined;
   private lastEditTimestamp: number | undefined;
   private lastTriggerTime = 0;
+  private lastTriggerFireTime = 0;
   private lastRejectionTime = 0;
   private enabled = true;
 
@@ -160,6 +162,11 @@ export class InlineEditTriggerer implements vscode.Disposable {
       return;
     }
 
+    // Ignore document load / content sync events with no actual changes
+    if (e.contentChanges.length === 0) {
+      return;
+    }
+
     this.lastEditTimestamp = Date.now();
     const docKey = e.document.uri.toString();
     
@@ -179,8 +186,14 @@ export class InlineEditTriggerer implements vscode.Disposable {
     // Typing trigger: if active editor matches and selection is a caret, debounce and trigger
     const active = vscode.window.activeTextEditor;
     if (active?.document === e.document && active.selection?.isEmpty) {
-      // Capture cursor position immediately before timeout is scheduled
       const cursorPosition = active.selection.start;
+      const prefix = e.document.getText(new vscode.Range(new vscode.Position(0, 0), cursorPosition));
+
+      if (prefix.trim().length === 0) {
+        return;
+      }
+
+      // Capture cursor position immediately before timeout is scheduled
       const current = this.documentChanges.get(docKey)!;
       if (current.debounceTimeout) {
         clearTimeout(current.debounceTimeout);
@@ -343,6 +356,15 @@ export class InlineEditTriggerer implements vscode.Disposable {
     position: vscode.Position,
     triggerSource: TriggerSource
   ): void {
+    const now = Date.now();
+    if (now - this.lastTriggerFireTime < this.minTriggerIntervalMs) {
+      this.logger.info(
+        `[InlineEditTriggerer] triggerSuggestion skipped: minimum interval (${now - this.lastTriggerFireTime}ms < ${this.minTriggerIntervalMs}ms)`
+      );
+      return;
+    }
+
+    this.lastTriggerFireTime = now;
     this.logger.info(`[InlineEditTriggerer] triggerSuggestion: source=${triggerSource}, line=${position.line}, col=${position.character}`);
     this.recordTrigger();
     this._onTrigger.fire({ document, position, triggerSource });

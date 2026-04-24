@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+﻿import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -10,7 +10,7 @@ import { ILogger } from '../context/contracts';
  */
 
 // 存储键：用户是否选择忽略 API 提案检查
-const IGNORE_PROPOSAL_CHECK_KEY = 'cometixTab.ignoreProposalCheck';
+const IGNORE_PROPOSAL_CHECK_KEY = 'sukiTab.ignoreProposalCheck';
 
 export interface PatchResult {
   success: boolean;
@@ -184,7 +184,7 @@ async function tryElevatedPatch(
 
       logger.info('[ProductJsonPatcher] 执行权限提升命令...');
 
-      sudo.exec(command, { name: 'Cometix Tab VS Code Configuration' }, async (error, stdout, stderr) => {
+      sudo.exec(command, { name: 'SukiTab VS Code Configuration' }, async (error, stdout, stderr) => {
         // 清理临时文件
         try {
           await fs.unlink(tempPath);
@@ -263,7 +263,7 @@ export async function checkAndPromptProposedApiOnStartup(
 
   // 显示提示
   const selection = await vscode.window.showWarningMessage(
-    '🚀 Cometix Tab 需要启用 VS Code Proposed API 才能提供完整功能（如内联编辑等）。\n\n是否要启用？这需要修改 VS Code 的 product.json 文件。',
+    '🚀 SukiTab 需要启用 VS Code Proposed API 才能提供完整功能（如内联编辑等）。\n\n是否要启用？这需要修改 VS Code 的 product.json 文件。',
     '启用（需要管理员权限）',
     '稍后提醒',
     '不再提示'
@@ -374,7 +374,7 @@ export async function ensureProposedApiEnabled(
 
   // 显示提示
   const selection = await vscode.window.showWarningMessage(
-    '🚀 Cometix Tab 需要启用 VS Code Proposed API 才能正常工作。\n\n需要修改 VS Code 的 product.json 文件以启用 inlineCompletionsAdditions API。',
+    '🚀 SukiTab 需要启用 VS Code Proposed API 才能正常工作。\n\n需要修改 VS Code 的 product.json 文件以启用 inlineCompletionsAdditions API。',
     '启用（需要管理员权限）',
     '稍后提醒',
     '不再提示'
@@ -388,7 +388,7 @@ export async function ensureProposedApiEnabled(
 
   if (selection === '稍后提醒') {
     log('[ProductJsonPatcher] 用户选择稍后提醒，扩展将停止激活');
-    vscode.window.showInformationMessage('Cometix Tab 未激活。请稍后通过命令面板运行 "Cometix Tab: Enable Proposed API" 来启用。');
+    vscode.window.showInformationMessage('SukiTab 未激活。请稍后通过命令面板运行 "SukiTab: Enable Proposed API" 来启用。');
     return false;
   }
 

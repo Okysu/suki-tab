@@ -1,27 +1,18 @@
 import * as vscode from 'vscode';
 import {
-  FilesyncUpdateWithModelVersion,
-  FSUploadFileRequest,
-  FSUploadFileResponse,
-  FSSyncFileRequest,
-  FSSyncFileResponse,
-  CursorPredictionConfigResponse,
-  CursorPredictionConfigRequest,
-  RecordCppFateRequest,
-  RecordCppFateResponse,
-  CppAppendRequest,
-  CppAppendResponse,
-  EditHistoryAppendChangesRequest,
-  EditHistoryAppendChangesResponse,
-  RefreshTabContextRequest,
-  RefreshTabContextResponse,
-  StreamCppRequest,
-  StreamCppResponse,
-  StreamNextCursorPredictionRequest,
-  StreamNextCursorPredictionResponse,
-  StreamCppRequest_ControlToken,
-} from '../rpc/cursor-tab_pb';
-import { CursorFeatureFlags, DebugConfig } from './types';
+  ApiType,
+  ByokConfig,
+  ProviderConfig,
+  FeatureFlags,
+  DebugConfig,
+  CompletionRequest,
+  FlushResult,
+  ConnectionTestResult,
+  AdditionalFileInfo,
+  LspSuggestionsContext,
+  TriggerSource,
+  ValidationResult,
+} from './types';
 
 export interface ILogger extends vscode.Disposable {
   info(message: string): void;
@@ -29,58 +20,35 @@ export interface ILogger extends vscode.Disposable {
   error(message: string, err?: unknown): void;
 }
 
-export interface IConfigService extends vscode.Disposable {
-  readonly flags: CursorFeatureFlags;
+export interface IConfigManager extends vscode.Disposable {
+  readonly config: ByokConfig;
+  readonly activeProvider: ProviderConfig;
+  readonly features: FeatureFlags;
   readonly debug: DebugConfig;
-  readonly onDidChange: vscode.Event<CursorFeatureFlags>;
+  readonly onDidChange: vscode.Event<ByokConfig>;
+  getConfigFilePath(): string;
+  getProviders(): ProviderConfig[];
+  setActiveProvider(name: string): Promise<void>;
+  updateConfig(config: ByokConfig): Promise<void>;
+  validateProvider(provider: ProviderConfig): ValidationResult;
+  createDefaultConfigFile(): Promise<void>;
+}
+
+export interface ILLMClient extends vscode.Disposable {
+  streamCompletion(request: CompletionRequest, requestId: string, signal?: AbortSignal): Promise<void>;
+  flushCompletion(requestId: string): Promise<FlushResult>;
+  cancelCompletion(requestId: string): void;
+  updateProvider(provider: ProviderConfig): void;
+  testConnection(): Promise<ConnectionTestResult>;
 }
 
 export interface IDocumentTracker extends vscode.Disposable {
   getHistory(uri: vscode.Uri): string[];
   clear(uri: vscode.Uri): void;
-  /**
-   * Get recent diff history entries with timestamps for a document.
-   * Timestamps are in milliseconds since epoch.
-   */
   getHistoryWithTimestamps(uri: vscode.Uri): Array<{ timestamp: number; change: string }>;
 }
 
-export interface IRpcClient extends vscode.Disposable {
-  // Start server-streaming Cpp request and buffer results internally (cursor-style)
-  streamCpp(
-    request: StreamCppRequest,
-    options: { generateUuid: string; startOfCpp: number; abortController?: AbortController }
-  ): Promise<void>;
-  flushCpp(
-    requestId: string
-  ): Promise<
-    | { type: 'success'; buffer: Array<string | any>; modelInfo?: any }
-    | { type: 'failure'; reason: string }
-  >;
-  cancelCpp(requestId: string): void;
-  getCppReport(): Promise<{ events: any[] }>;
-
-  // Other RPCs
-  streamNextCursorPrediction(
-    request: StreamNextCursorPredictionRequest,
-    abortController?: AbortController
-  ): Promise<AsyncIterable<StreamNextCursorPredictionResponse>>;
-  refreshTabContext(request: RefreshTabContextRequest): Promise<RefreshTabContextResponse>;
-  uploadFile(request: FSUploadFileRequest): Promise<FSUploadFileResponse>;
-  syncFile(request: FSSyncFileRequest): Promise<FSSyncFileResponse>;
-  cursorPredictionConfig(request?: CursorPredictionConfigRequest): Promise<CursorPredictionConfigResponse>;
-  recordCppFate(request: RecordCppFateRequest): Promise<RecordCppFateResponse>;
-  cppAppend(request: CppAppendRequest): Promise<CppAppendResponse>;
-  cppEditHistoryAppend(request: EditHistoryAppendChangesRequest): Promise<EditHistoryAppendChangesResponse>;
-}
-
-export interface IFileSyncCoordinator extends vscode.Disposable {
-  prepareDocument(document: vscode.TextDocument): Promise<void>;
-  getSyncPayload(document: vscode.TextDocument): { relyOnFileSync: boolean; updates: FilesyncUpdateWithModelVersion[] };
-  shouldRelyOnFileSync(document: vscode.TextDocument): boolean;
-}
-
-export interface ICursorPredictionController extends vscode.Disposable {
+export interface IPredictionController extends vscode.Disposable {
   handleSuggestionAccepted(editor: vscode.TextEditor): Promise<void>;
   clearForDocument(document: vscode.TextDocument): void;
   showPredictionAt(editor: vscode.TextEditor, line: number): void;
@@ -109,12 +77,12 @@ export interface IRecentFilesTracker extends vscode.Disposable {
   getAdditionalFilesContext(
     currentUri: vscode.Uri,
     fetchContent?: boolean
-  ): Promise<import('./types').AdditionalFileInfo[]>;
+  ): Promise<AdditionalFileInfo[]>;
 }
 
 export interface ILspSuggestionsTracker extends vscode.Disposable {
   recordSuggestions(documentUri: string, suggestions: string[]): void;
-  getRelevantSuggestions(documentUri: string): import('./types').LspSuggestionsContext;
+  getRelevantSuggestions(documentUri: string): LspSuggestionsContext;
   captureCompletionsAt(document: vscode.TextDocument, position: vscode.Position): Promise<void>;
 }
 
@@ -124,7 +92,7 @@ export interface ITelemetryService extends vscode.Disposable {
     document: vscode.TextDocument,
     requestId: string,
     position: vscode.Position,
-    source: import('./types').TriggerSource
+    source: TriggerSource
   ): void;
   recordSuggestionEvent(
     document: vscode.TextDocument,
@@ -140,37 +108,4 @@ export interface ITelemetryService extends vscode.Disposable {
     kind: 'word' | 'line' | 'suggest' | 'unknown'
   ): void;
   recordGenerationFinished(requestId: string, success: boolean): void;
-}
-
-/**
- * Interface for workspace-level persistent storage
- * Mirrors Cursor's pb.workspaceUserPersistentStorage and pb.applicationUserPersistentStorage
- */
-export interface IWorkspaceStorage extends vscode.Disposable {
-  /**
-   * Get the unique workspace ID for CPP requests
-   * Generated once per workspace and persisted
-   */
-  getWorkspaceId(): string;
-
-  /**
-   * Get control token from application storage
-   * Used for non-manual triggers
-   */
-  getControlToken(): StreamCppRequest_ControlToken | undefined;
-
-  /**
-   * Set control token in application storage
-   */
-  setControlToken(token: StreamCppRequest_ControlToken | undefined): Promise<void>;
-
-  /**
-   * Get checkFilesyncHashPercent from config
-   */
-  getCheckFilesyncHashPercent(): number;
-
-  /**
-   * Clear cached values
-   */
-  clearCache(): void;
 }

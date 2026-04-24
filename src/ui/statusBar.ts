@@ -1,12 +1,9 @@
-import * as vscode from 'vscode';
+﻿import * as vscode from 'vscode';
 import { SnoozeService } from '../services/snoozeService';
-import { ServerConfigService } from '../services/serverConfigService';
 import { TelemetryService, SessionStatistics } from '../services/telemetryService';
-import { EndpointManager, ResolvedEndpoint } from '../services/endpointManager';
+import { ConfigManager } from '../services/configManager';
+import { ProviderConfig } from '../context/types';
 
-/**
- * Status bar state enum
- */
 export enum StatusBarState {
   Idle = 'idle',
   Working = 'working',
@@ -15,9 +12,6 @@ export enum StatusBarState {
   Snoozing = 'snoozing'
 }
 
-/**
- * Icons for status bar (similar to Copilot's Icon enum)
- */
 export enum StatusIcon {
   Logo = '$(sparkle)',
   Working = '$(loading~spin)',
@@ -27,50 +21,34 @@ export enum StatusIcon {
   Snoozing = '$(bell-slash)',
 }
 
-/**
- * Status bar item for Cometix Tab
- * Uses StatusBarItem with MarkdownString tooltip for rich hover panel
- * The tooltip stays visible when mouse moves over it
- */
 export class StatusBar implements vscode.Disposable {
   private statusBarItem: vscode.StatusBarItem;
   private disposables: vscode.Disposable[] = [];
   private currentState: StatusBarState = StatusBarState.Idle;
   private snoozeService: SnoozeService;
-  private serverConfigService: ServerConfigService;
+  private configManager: ConfigManager;
   private telemetryService: TelemetryService | undefined;
-  private endpointManager: EndpointManager | undefined;
   private lastStats: SessionStatistics | undefined;
-  private lastEndpoint: ResolvedEndpoint | undefined;
+  private lastProvider: ProviderConfig | undefined;
 
-  constructor() {
+  constructor(configManager: ConfigManager) {
+    this.configManager = configManager;
     this.snoozeService = SnoozeService.getInstance();
-    this.serverConfigService = ServerConfigService.getInstance();
+    this.lastProvider = configManager.activeProvider;
 
-    // Create status bar item with rich MarkdownString tooltip
     this.statusBarItem = vscode.window.createStatusBarItem(
-      'cometix-tab.status',
+      'suki-tab.status',
       vscode.StatusBarAlignment.Right,
       100
     );
-    this.statusBarItem.name = 'Cometix Tab';
+    this.statusBarItem.name = 'SukiTab';
+    this.statusBarItem.command = 'suki-tab.showStatusMenu';
 
-    // Click opens the statistics menu
-    this.statusBarItem.command = 'cometix-tab.showStatusMenu';
-
-    // Listen for state changes
     this.registerListeners();
-
-    // Initial update
     this.updateStatusIndicator();
-
-    // Show the status bar
     this.statusBarItem.show();
   }
 
-  /**
-   * Set telemetry service for statistics display
-   */
   setTelemetryService(telemetryService: TelemetryService): void {
     this.telemetryService = telemetryService;
     this.lastStats = telemetryService.getStatistics();
@@ -85,48 +63,35 @@ export class StatusBar implements vscode.Disposable {
     this.updateStatusIndicator();
   }
 
-  /**
-   * Set endpoint manager for endpoint display
-   */
-  setEndpointManager(endpointManager: EndpointManager): void {
-    this.endpointManager = endpointManager;
-    this.lastEndpoint = endpointManager.resolveEndpoint();
-    
-    this.disposables.push(
-      endpointManager.onEndpointChanged((endpoint) => {
-        this.lastEndpoint = endpoint;
-        this.updateStatusIndicator();
-      })
-    );
+  setConfigManager(configManager: ConfigManager): void {
+    this.configManager = configManager;
+    this.lastProvider = configManager.activeProvider;
     
     this.updateStatusIndicator();
   }
 
   private registerListeners(): void {
-    // Listen for snooze changes
     this.disposables.push(
       this.snoozeService.onSnoozeChanged(() => {
         this.updateStatusIndicator();
       })
     );
 
-    // Listen for config changes
     this.disposables.push(
       vscode.workspace.onDidChangeConfiguration(e => {
-        if (e.affectsConfiguration('cometixTab')) {
+        if (e.affectsConfiguration('sukiTab')) {
           this.updateStatusIndicator();
         }
       })
     );
 
-    // Listen for server config updates
     this.disposables.push(
-      this.serverConfigService.onConfigUpdated(() => {
+      this.configManager.onDidChange(() => {
+        this.lastProvider = this.configManager.activeProvider;
         this.updateStatusIndicator();
       })
     );
 
-    // Listen for active editor changes
     this.disposables.push(
       vscode.window.onDidChangeActiveTextEditor(() => {
         this.updateStatusIndicator();
@@ -134,80 +99,64 @@ export class StatusBar implements vscode.Disposable {
     );
   }
 
-  /**
-   * Set the current state
-   */
   setState(state: StatusBarState): void {
     this.currentState = state;
     this.updateStatusIndicator();
   }
 
-  /**
-   * Update status bar display based on current state
-   */
   private updateStatusIndicator(): void {
-    const vscodeConfig = vscode.workspace.getConfiguration('cometixTab');
+    const vscodeConfig = vscode.workspace.getConfiguration('sukiTab');
     const enabled = vscodeConfig.get<boolean>('enabled', true);
 
-    // Set context for menus
-    void vscode.commands.executeCommand('setContext', 'cometix-tab.enabled', enabled);
+    void vscode.commands.executeCommand('setContext', 'suki-tab.enabled', enabled);
 
-    // Get current model
-    const model = vscodeConfig.get<string>('model', 'auto');
+    const model = this.configManager.activeProvider.model;
     const modelLabel = this.getModelLabel(model);
 
-    // Determine status and update display
     if (!enabled) {
-      this.statusBarItem.text = `${StatusIcon.Disabled} Cometix`;
+      this.statusBarItem.text = `${StatusIcon.Disabled} Suki`;
       this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-      this.statusBarItem.command = 'cometix-tab.toggleEnabled';
+      this.statusBarItem.command = 'suki-tab.toggleEnabled';
     } else if (this.snoozeService.isSnoozing()) {
       const remaining = this.snoozeService.getRemainingMinutes();
-      this.statusBarItem.text = `${StatusIcon.Snoozing} Cometix (${remaining}m)`;
+      this.statusBarItem.text = `${StatusIcon.Snoozing} Suki (${remaining}m)`;
       this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-      this.statusBarItem.command = 'cometix-tab.cancelSnooze';
+      this.statusBarItem.command = 'suki-tab.cancelSnooze';
     } else {
       switch (this.currentState) {
         case StatusBarState.Working:
-          this.statusBarItem.text = `${StatusIcon.Working} Cometix [${modelLabel}]`;
+          this.statusBarItem.text = `${StatusIcon.Working} Suki [${modelLabel}]`;
           this.statusBarItem.backgroundColor = undefined;
           break;
 
         case StatusBarState.Error:
-          this.statusBarItem.text = `${StatusIcon.Error} Cometix [${modelLabel}]`;
+          this.statusBarItem.text = `${StatusIcon.Error} Suki [${modelLabel}]`;
           this.statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-          this.statusBarItem.command = 'cometix-tab.showLogs';
+          this.statusBarItem.command = 'suki-tab.showLogs';
           break;
 
         case StatusBarState.Idle:
         default:
-          this.statusBarItem.text = `${StatusIcon.Logo} Cometix [${modelLabel}]`;
+          this.statusBarItem.text = `${StatusIcon.Logo} Suki [${modelLabel}]`;
           this.statusBarItem.backgroundColor = undefined;
-          this.statusBarItem.command = 'cometix-tab.showStatusMenu';
+          this.statusBarItem.command = 'suki-tab.showStatusMenu';
           break;
       }
     }
 
-    // Update the rich tooltip
     this.statusBarItem.tooltip = this.buildRichTooltip(enabled);
   }
 
-  /**
-   * Build rich MarkdownString tooltip with statistics and quick actions
-   * This tooltip stays visible when mouse hovers over it
-   */
   private buildRichTooltip(enabled: boolean): vscode.MarkdownString {
     const md = new vscode.MarkdownString('', true);
-    md.isTrusted = true; // Allow command links
+    md.isTrusted = true;
     md.supportHtml = true;
 
-    // Header with status
     const statusIcon = this.getStatusIcon(enabled);
     const statusText = this.getStatusText(enabled);
-    md.appendMarkdown(`### ${statusIcon} Cometix Tab\n\n`);
+    md.appendMarkdown(`### ${statusIcon} SukiTab\n\n`);
     md.appendMarkdown(`**Status:** ${statusText}\n\n`);
 
-    // Statistics section
     if (this.lastStats) {
       md.appendMarkdown(`---\n\n`);
       md.appendMarkdown(`#### $(dashboard) Session Statistics\n\n`);
@@ -231,22 +180,16 @@ export class StatusBar implements vscode.Disposable {
       if (this.lastStats.totalCharsAccepted > 0) {
         md.appendMarkdown(`$(text-size) **Characters Accepted:** ${this.lastStats.totalCharsAccepted.toLocaleString()}\n\n`);
       }
-      
-      if (this.lastStats.cursorJumpCount > 0) {
-        md.appendMarkdown(`$(arrow-right) **Cursor Jumps:** ${this.lastStats.cursorJumpCount}\n\n`);
-      }
 
       if (this.lastStats.avgGenerationTimeMs > 0) {
         md.appendMarkdown(`$(watch) **Avg Generation Time:** ${this.lastStats.avgGenerationTimeMs}ms\n\n`);
       }
 
-      // Trigger sources breakdown
       const triggersBySource = this.lastStats.triggersBySource;
       if (Object.keys(triggersBySource).length > 0) {
         md.appendMarkdown(`---\n\n`);
         md.appendMarkdown(`#### $(zap) Triggers by Source\n\n`);
         
-        // Sort by count descending
         const sorted = Object.entries(triggersBySource)
           .sort(([, a], [, b]) => b - a);
         
@@ -258,77 +201,45 @@ export class StatusBar implements vscode.Disposable {
       }
     }
 
-    // Model section
-    const model = vscode.workspace.getConfiguration('cometixTab').get<string>('model', 'auto');
-    const modelLabels: Record<string, string> = {
-      'auto': 'Auto (Server decides)',
-      'fast': 'Fast (Lower latency)',
-      'advanced': 'Advanced (Higher quality)',
-    };
+    const provider = this.configManager.activeProvider;
     md.appendMarkdown(`---\n\n`);
-    md.appendMarkdown(`#### $(beaker) Model\n\n`);
-    md.appendMarkdown(`$(symbol-method) **Current Model:** ${modelLabels[model] || model}\n\n`);
-    md.appendMarkdown(`[$(pencil) Change Model](command:cometix-tab.selectModel)\n\n`);
+    md.appendMarkdown(`#### $(beaker) Provider\n\n`);
+    md.appendMarkdown(`$(symbol-method) **Provider:** ${provider.name}\n\n`);
+    md.appendMarkdown(`$(hubot) **Model:** ${provider.model}\n\n`);
+    md.appendMarkdown(`[$(pencil) Change Provider](command:suki-tab.selectProvider)\n\n`);
 
-    // Endpoint section
     md.appendMarkdown(`---\n\n`);
     md.appendMarkdown(`#### $(globe) Connection\n\n`);
     
-    // Always get fresh endpoint from endpointManager to avoid stale cache
-    const currentEndpoint = this.endpointManager?.resolveEndpoint() ?? this.lastEndpoint;
-    if (currentEndpoint) {
-      const modeLabels: Record<string, string> = {
-        official: 'Official',
-        auto: 'Automatic',
-        custom: 'Custom',
-      };
-      md.appendMarkdown(`$(plug) **Endpoint Mode:** ${modeLabels[currentEndpoint.mode] || currentEndpoint.mode}\n\n`);
-      
-      try {
-        const hostname = new URL(currentEndpoint.geoCppUrl).hostname;
-        md.appendMarkdown(`$(server) **Current Server:** ${hostname}\n\n`);
-      } catch {
-        md.appendMarkdown(`$(server) **Current Server:** ${currentEndpoint.geoCppUrl}\n\n`);
-      }
-    }
+    md.appendMarkdown(`$(link) **Base URL:** ${provider.baseUrl}\n\n`);
+    md.appendMarkdown(`$(symbol-class) **API Type:** ${provider.apiType}\n\n`);
+    md.appendMarkdown(`$(remote) **Model:** ${provider.model}\n\n`);
 
-    // Quick actions section
     md.appendMarkdown(`---\n\n`);
     md.appendMarkdown(`#### $(zap) Quick Actions\n\n`);
     
     if (enabled) {
-      md.appendMarkdown(`[$(circle-slash) Disable Completions](command:cometix-tab.toggleEnabled)\n\n`);
+      md.appendMarkdown(`[$(circle-slash) Disable Completions](command:suki-tab.toggleEnabled)\n\n`);
       if (!this.snoozeService.isSnoozing()) {
-        md.appendMarkdown(`[$(bell-slash) Snooze Completions](command:cometix-tab.showSnoozePicker)\n\n`);
+        md.appendMarkdown(`[$(bell-slash) Snooze Completions](command:suki-tab.showSnoozePicker)\n\n`);
       } else {
-        md.appendMarkdown(`[$(bell) Cancel Snooze](command:cometix-tab.cancelSnooze)\n\n`);
+        md.appendMarkdown(`[$(bell) Cancel Snooze](command:suki-tab.cancelSnooze)\n\n`);
       }
     } else {
-      md.appendMarkdown(`[$(circle-filled) Enable Completions](command:cometix-tab.toggleEnabled)\n\n`);
+      md.appendMarkdown(`[$(circle-filled) Enable Completions](command:suki-tab.toggleEnabled)\n\n`);
     }
     
-    md.appendMarkdown(`[$(refresh) Reset Statistics](command:cometix-tab.resetStatistics)\n\n`);
-    md.appendMarkdown(`[$(output) Show Logs](command:cometix-tab.showLogs)\n\n`);
-    md.appendMarkdown(`[$(settings-gear) Open Settings](command:workbench.action.openSettings?%22cometixTab%22)\n\n`);
+    md.appendMarkdown(`[$(refresh) Reset Statistics](command:suki-tab.resetStatistics)\n\n`);
+    md.appendMarkdown(`[$(output) Show Logs](command:suki-tab.showLogs)\n\n`);
+    md.appendMarkdown(`[$(settings-gear) Open Settings](command:suki-tab.openSettings)\n\n`);
 
     return md;
   }
 
-  /**
-   * Get short label for model
-   */
   private getModelLabel(model: string): string {
-    const labels: Record<string, string> = {
-      'auto': 'Auto',
-      'fast': 'Fast',
-      'advanced': 'Adv',
-    };
-    return labels[model] || model;
+    return model;
   }
 
-  /**
-   * Get icon for trigger source
-   */
   private getTriggerSourceIcon(source: string): string {
     const icons: Record<string, string> = {
       'unknown': '$(question)',
@@ -345,9 +256,6 @@ export class StatusBar implements vscode.Disposable {
     return icons[source] || '$(circle-outline)';
   }
 
-  /**
-   * Format trigger source name for display
-   */
   private formatTriggerSourceName(source: string): string {
     const labels: Record<string, string> = {
       'unknown': 'Unknown',
@@ -366,12 +274,9 @@ export class StatusBar implements vscode.Disposable {
       .replace(/\b\w/g, c => c.toUpperCase());
   }
 
-  /**
-   * Get status icon based on current state
-   */
   private getStatusIcon(enabled: boolean): string {
-    if (!enabled) return '$(circle-slash)';
-    if (this.snoozeService.isSnoozing()) return '$(bell-slash)';
+    if (!enabled) {return '$(circle-slash)';}
+    if (this.snoozeService.isSnoozing()) {return '$(bell-slash)';}
     switch (this.currentState) {
       case StatusBarState.Working: return '$(loading~spin)';
       case StatusBarState.Error: return '$(error)';
@@ -379,11 +284,8 @@ export class StatusBar implements vscode.Disposable {
     }
   }
 
-  /**
-   * Get status text based on current state
-   */
   private getStatusText(enabled: boolean): string {
-    if (!enabled) return 'Disabled';
+    if (!enabled) {return 'Disabled';}
     if (this.snoozeService.isSnoozing()) {
       return `Snoozed (${this.snoozeService.getRemainingMinutes()}m remaining)`;
     }
@@ -394,9 +296,6 @@ export class StatusBar implements vscode.Disposable {
     }
   }
 
-  /**
-   * Format duration in human readable format
-   */
   private formatDuration(ms: number): string {
     const seconds = Math.floor(ms / 1000);
     const minutes = Math.floor(seconds / 60);
@@ -411,19 +310,12 @@ export class StatusBar implements vscode.Disposable {
     }
   }
 
-  /**
-   * Get current statistics for the picker
-   */
   getStatistics(): SessionStatistics | undefined {
     return this.lastStats;
   }
 
-  /**
-   * Get current endpoint for the picker
-   */
-  getEndpoint(): ResolvedEndpoint | undefined {
-    // Return fresh endpoint from manager to avoid stale cache
-    return this.endpointManager?.resolveEndpoint() ?? this.lastEndpoint;
+  getActiveProvider(): ProviderConfig | undefined {
+    return this.configManager.activeProvider;
   }
 
   dispose(): void {

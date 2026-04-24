@@ -1,37 +1,28 @@
-import * as vscode from 'vscode';
+﻿import * as vscode from 'vscode';
 import { TelemetryService, SessionStatistics } from '../services/telemetryService';
-import { EndpointManager, ResolvedEndpoint } from '../services/endpointManager';
+import { ConfigManager } from '../services/configManager';
 import { SnoozeService } from '../services/snoozeService';
-import { TriggerSource } from '../context/types';
+import { TriggerSource, ProviderConfig } from '../context/types';
 
-/**
- * Quick pick item with action
- */
 interface StatusPickerItem extends vscode.QuickPickItem {
   action?: string;
   args?: any[];
 }
 
-/**
- * Commands for the status picker
- */
-const CMD_TOGGLE_ENABLED = 'cometix-tab.toggleEnabled';
-const CMD_SHOW_LOGS = 'cometix-tab.showLogs';
-const CMD_OPEN_SETTINGS = 'workbench.action.openSettings';
-const CMD_SELECT_ENDPOINT = 'cometix-tab.selectEndpointMode';
-const CMD_SELECT_REGION = 'cometix-tab.selectRegion';
-const CMD_SELECT_MODEL = 'cometix-tab.selectModel';
-const CMD_SNOOZE = 'cometix-tab.showSnoozePicker';
-const CMD_CANCEL_SNOOZE = 'cometix-tab.cancelSnooze';
-const CMD_RESET_STATS = 'cometix-tab.resetStatistics';
+const CMD_TOGGLE_ENABLED = 'suki-tab.toggleEnabled';
+const CMD_SHOW_LOGS = 'suki-tab.showLogs';
+const CMD_OPEN_SETTINGS = 'suki-tab.openSettings';
+const CMD_SELECT_PROVIDER = 'suki-tab.selectProvider';
+const CMD_TEST_CONNECTION = 'suki-tab.testConnection';
+const CMD_OPEN_CONFIG_FILE = 'suki-tab.openConfigFile';
+const CMD_SELECT_MODEL = 'suki-tab.selectModel';
+const CMD_SNOOZE = 'suki-tab.showSnoozePicker';
+const CMD_CANCEL_SNOOZE = 'suki-tab.cancelSnooze';
+const CMD_RESET_STATS = 'suki-tab.resetStatistics';
 
-/**
- * Status bar picker menu - similar to Copilot's CopilotStatusBarPickMenu
- * Shows statistics and quick actions when clicking the status bar
- */
 export class StatusBarPicker implements vscode.Disposable {
   private telemetryService: TelemetryService | undefined;
-  private endpointManager: EndpointManager | undefined;
+  private configManager: ConfigManager | undefined;
   private snoozeService: SnoozeService;
   private disposables: vscode.Disposable[] = [];
 
@@ -39,29 +30,20 @@ export class StatusBarPicker implements vscode.Disposable {
     this.snoozeService = SnoozeService.getInstance();
   }
 
-  /**
-   * Set telemetry service for statistics
-   */
   setTelemetryService(telemetryService: TelemetryService): void {
     this.telemetryService = telemetryService;
   }
 
-  /**
-   * Set endpoint manager for endpoint info
-   */
-  setEndpointManager(endpointManager: EndpointManager): void {
-    this.endpointManager = endpointManager;
+  setConfigManager(configManager: ConfigManager): void {
+    this.configManager = configManager;
   }
 
-  /**
-   * Show the status picker menu
-   */
   async show(): Promise<void> {
     const items = this.buildMenuItems();
 
     const quickPick = vscode.window.createQuickPick<StatusPickerItem>();
     quickPick.items = items;
-    quickPick.title = 'Cometix Tab Status';
+    quickPick.title = 'SukiTab Status';
     quickPick.placeholder = 'Select an action or view statistics...';
     quickPick.matchOnDescription = true;
     quickPick.matchOnDetail = true;
@@ -78,18 +60,13 @@ export class StatusBarPicker implements vscode.Disposable {
     quickPick.show();
   }
 
-  /**
-   * Build menu items with statistics and actions
-   */
   private buildMenuItems(): StatusPickerItem[] {
     const items: StatusPickerItem[] = [];
-    const config = vscode.workspace.getConfiguration('cometixTab');
+    const config = vscode.workspace.getConfiguration('sukiTab');
     const enabled = config.get<boolean>('enabled', true);
 
-    // === Status Section ===
     items.push(this.newStatusItem(enabled));
 
-    // === Statistics Section ===
     items.push({
       label: 'Session Statistics',
       kind: vscode.QuickPickItemKind.Separator
@@ -105,7 +82,6 @@ export class StatusBarPicker implements vscode.Disposable {
       });
     }
 
-    // === Trigger Sources Section ===
     if (stats && Object.keys(stats.triggersBySource).length > 0) {
       items.push({
         label: 'Triggers by Source',
@@ -114,21 +90,18 @@ export class StatusBarPicker implements vscode.Disposable {
       items.push(...this.buildTriggerSourceItems(stats.triggersBySource));
     }
 
-    // === Model Section ===
     items.push({
       label: 'Model',
       kind: vscode.QuickPickItemKind.Separator
     });
     items.push(...this.buildModelItems());
 
-    // === Endpoint Section ===
     items.push({
       label: 'Connection',
       kind: vscode.QuickPickItemKind.Separator
     });
-    items.push(...this.buildEndpointItems());
+    items.push(...this.buildProviderItems());
 
-    // === Actions Section ===
     items.push({
       label: 'Actions',
       kind: vscode.QuickPickItemKind.Separator
@@ -138,9 +111,6 @@ export class StatusBarPicker implements vscode.Disposable {
     return items;
   }
 
-  /**
-   * Build the status item showing current state
-   */
   private newStatusItem(enabled: boolean): StatusPickerItem {
     let statusText: string;
     let statusIcon: string;
@@ -164,26 +134,20 @@ export class StatusBarPicker implements vscode.Disposable {
     };
   }
 
-  /**
-   * Build statistics display items
-   */
   private buildStatisticsItems(stats: SessionStatistics): StatusPickerItem[] {
     const items: StatusPickerItem[] = [];
 
-    // Session duration
     const sessionDuration = this.formatDuration(Date.now() - stats.sessionStartTime);
     items.push({
       label: '$(clock) Session Duration',
       description: sessionDuration
     });
 
-    // Completions summary
     items.push({
       label: '$(code) Completions Shown',
       description: `${stats.suggestionCount} total`
     });
 
-    // Accept/Reject stats
     const acceptRate = stats.suggestionCount > 0
       ? Math.round(stats.acceptRate * 100)
       : 0;
@@ -204,7 +168,6 @@ export class StatusBarPicker implements vscode.Disposable {
       });
     }
 
-    // Characters accepted
     if (stats.totalCharsAccepted > 0) {
       items.push({
         label: '$(text-size) Characters Accepted',
@@ -212,23 +175,6 @@ export class StatusBarPicker implements vscode.Disposable {
       });
     }
 
-    // Cursor jumps
-    if (stats.cursorJumpCount > 0) {
-      items.push({
-        label: '$(arrow-right) Cursor Jumps',
-        description: `${stats.cursorJumpCount}`
-      });
-    }
-
-    // Files synced
-    if (stats.filesSyncedCount > 0) {
-      items.push({
-        label: '$(cloud-upload) Files Synced',
-        description: `${stats.filesSyncedCount}`
-      });
-    }
-
-    // Average generation time
     if (stats.avgGenerationTimeMs > 0) {
       items.push({
         label: '$(dashboard) Avg Generation Time',
@@ -239,13 +185,9 @@ export class StatusBarPicker implements vscode.Disposable {
     return items;
   }
 
-  /**
-   * Build trigger source breakdown items
-   */
   private buildTriggerSourceItems(triggersBySource: Record<string, number>): StatusPickerItem[] {
     const items: StatusPickerItem[] = [];
 
-    // Sort by count descending
     const sorted = Object.entries(triggersBySource)
       .sort(([, a], [, b]) => b - a);
 
@@ -261,97 +203,73 @@ export class StatusBarPicker implements vscode.Disposable {
     return items;
   }
 
-  /**
-   * Build model selection items
-   */
   private buildModelItems(): StatusPickerItem[] {
     const items: StatusPickerItem[] = [];
-    const config = vscode.workspace.getConfiguration('cometixTab');
-    const currentModel = config.get<string>('model', 'auto');
+    const currentModel = this.configManager?.activeProvider.model ?? 'not configured';
 
-    const modelLabels: Record<string, { label: string; description: string }> = {
-      'auto': { label: 'Auto', description: 'Server decides the best model' },
-      'fast': { label: 'Fast', description: 'Lower latency, quick completions' },
-      'advanced': { label: 'Advanced', description: 'Higher quality completions' },
-    };
-
-    const info = modelLabels[currentModel] || { label: currentModel, description: '' };
     items.push({
-      label: `$(beaker) Current Model: ${info.label}`,
-      description: info.description,
+      label: `$(beaker) Current Model: ${currentModel}`,
+      description: 'Click to change model',
       action: CMD_SELECT_MODEL
     });
 
     return items;
   }
 
-  /**
-   * Build endpoint information items
-   */
-  private buildEndpointItems(): StatusPickerItem[] {
+  private buildProviderItems(): StatusPickerItem[] {
     const items: StatusPickerItem[] = [];
 
-    if (this.endpointManager) {
-      const info = this.endpointManager.getEndpointInfo();
+    if (this.configManager) {
+      const provider = this.configManager.activeProvider;
+      const providers = this.configManager.getProviders();
 
       items.push({
-        label: '$(globe) Endpoint Mode',
-        description: info.modeLabel,
-        action: CMD_SELECT_ENDPOINT
+        label: `$(remote) Provider: ${provider.name}`,
+        description: provider.baseUrl
       });
 
-      try {
-        const hostname = new URL(info.currentEndpoint).hostname;
-        items.push({
-          label: '$(server) Current Server',
-          description: hostname
-        });
-      } catch {
-        items.push({
-          label: '$(server) Current Server',
-          description: info.currentEndpoint
-        });
-      }
+      items.push({
+        label: '$(symbol-method) API Type',
+        description: provider.apiType
+      });
 
-      if (info.regionLabel) {
-        items.push({
-          label: '$(location) Region',
-          description: info.regionLabel,
-          action: CMD_SELECT_REGION
-        });
-      }
+      items.push({
+        label: '$(diff-added) Select Provider',
+        description: `${providers.length} available`,
+        action: CMD_SELECT_PROVIDER
+      });
 
-      if (info.isAutoDetected) {
-        items.push({
-          label: '$(info) Auto-detected',
-          description: 'Server provided optimal endpoint'
-        });
-      }
+      items.push({
+        label: '$(debug-alt) Test Connection',
+        description: 'Verify API connectivity',
+        action: CMD_TEST_CONNECTION
+      });
+
+      items.push({
+        label: '$(file-code) Open Config File',
+        description: 'Edit BYOK configuration',
+        action: CMD_OPEN_CONFIG_FILE
+      });
     } else {
       items.push({
-        label: '$(warning) Endpoint not configured',
+        label: '$(warning) Provider not configured',
         description: 'Click to configure',
-        action: CMD_SELECT_ENDPOINT
+        action: CMD_SELECT_PROVIDER
       });
     }
 
     return items;
   }
 
-  /**
-   * Build action items
-   */
   private buildActionItems(enabled: boolean): StatusPickerItem[] {
     const items: StatusPickerItem[] = [];
 
-    // Toggle enabled
     items.push({
       label: enabled ? '$(circle-slash) Disable Completions' : '$(circle-filled) Enable Completions',
       description: enabled ? 'Turn off AI completions' : 'Turn on AI completions',
       action: CMD_TOGGLE_ENABLED
     });
 
-    // Snooze
     if (enabled) {
       if (this.snoozeService.isSnoozing()) {
         items.push({
@@ -368,39 +286,33 @@ export class StatusBarPicker implements vscode.Disposable {
       }
     }
 
-    // Reset statistics
     items.push({
       label: '$(refresh) Reset Statistics',
       description: 'Clear session stats',
       action: CMD_RESET_STATS
     });
 
-    // Show logs
     items.push({
       label: '$(output) Show Logs',
       description: 'View output logs',
       action: CMD_SHOW_LOGS
     });
 
-    // Open settings
     items.push({
       label: '$(settings-gear) Open Settings',
-      description: 'Configure Cometix Tab',
+      description: 'Configure SukiTab',
       action: CMD_OPEN_SETTINGS,
-      args: ['cometixTab']
+      args: ['sukiTab']
     });
 
     return items;
   }
 
-  /**
-   * Execute selected action
-   */
   private async executeAction(action: string, args?: any[]): Promise<void> {
     switch (action) {
       case CMD_RESET_STATS:
         this.telemetryService?.resetStatistics();
-        vscode.window.showInformationMessage('Cometix Tab: Statistics reset');
+        vscode.window.showInformationMessage('SukiTab: Statistics reset');
         break;
 
       default:
@@ -413,9 +325,6 @@ export class StatusBarPicker implements vscode.Disposable {
     }
   }
 
-  /**
-   * Get icon for trigger source
-   */
   private getSourceIcon(source: TriggerSource | string): string {
     const icons: Record<string, string> = {
       [TriggerSource.Unknown]: '$(question)',
@@ -424,6 +333,7 @@ export class StatusBarPicker implements vscode.Disposable {
       [TriggerSource.OptionHold]: '$(key)',
       [TriggerSource.LinterErrors]: '$(error)',
       [TriggerSource.ParameterHints]: '$(symbol-parameter)',
+      [TriggerSource.Prediction]: '$(arrow-right)',
       [TriggerSource.CursorPrediction]: '$(arrow-right)',
       [TriggerSource.ManualTrigger]: '$(play)',
       [TriggerSource.EditorChange]: '$(window)',
@@ -432,20 +342,13 @@ export class StatusBarPicker implements vscode.Disposable {
     return icons[source] || '$(circle-outline)';
   }
 
-  /**
-   * Format trigger source name for display
-   */
   private formatSourceName(source: string): string {
-    // Convert camelCase/PascalCase to readable text
     return source
       .replace(/([A-Z])/g, ' $1')
       .replace(/^./, str => str.toUpperCase())
       .trim();
   }
 
-  /**
-   * Format duration in human readable format
-   */
   private formatDuration(ms: number): string {
     const seconds = Math.floor(ms / 1000);
     const minutes = Math.floor(seconds / 60);
@@ -460,9 +363,6 @@ export class StatusBarPicker implements vscode.Disposable {
     }
   }
 
-  /**
-   * Format large numbers with commas
-   */
   private formatNumber(num: number): string {
     return num.toLocaleString();
   }

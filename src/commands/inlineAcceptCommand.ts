@@ -1,23 +1,17 @@
-import * as vscode from 'vscode';
+﻿import * as vscode from 'vscode';
 import { Logger } from '../services/logger';
-import { CursorStateMachine } from '../services/cursorStateMachine';
+import { CompletionStateMachine } from '../services/completionStateMachine';
 
-/**
- * Register the inline accept command.
- * This command is called by VS Code when user accepts an inline completion.
- * The command arguments come from item.command set in the InlineCompletionProvider.
- */
 export function registerInlineAcceptCommand(
-  stateMachine: CursorStateMachine,
+  stateMachine: CompletionStateMachine,
   logger: Logger,
   subscriptions: vscode.Disposable[],
 ): void {
   const command = vscode.commands.registerCommand(
-    'cometix-tab.inlineAccept',
+    'suki-tab.inlineAccept',
     async (
       requestId?: string,
-      bindingId?: string,
-      nextEditActionId?: string,
+      _bindingId?: string,
       acceptedLength?: number
     ) => {
       const editor = vscode.window.activeTextEditor;
@@ -25,15 +19,7 @@ export function registerInlineAcceptCommand(
         return;
       }
       try {
-        // Handle accept with telemetry and next action triggering
-        await stateMachine.handleAccept(editor, requestId, bindingId, acceptedLength);
-        
-        // If there's a next edit, trigger inline completion to show it
-        // Note: displayNextActionIfAvailable in handleAccept also handles this,
-        // but we keep this as a fallback for explicit nextEditActionId
-        if (nextEditActionId) {
-          logger.info(`[InlineAccept] 🔄 Next edit hint: ${nextEditActionId}`);
-        }
+        await stateMachine.handleAccept(editor, requestId, _bindingId, acceptedLength);
       } catch (error) {
         logger.error('Failed to handle inline accept', error);
       }
