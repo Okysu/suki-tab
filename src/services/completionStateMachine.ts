@@ -208,11 +208,15 @@ export class CompletionStateMachine implements vscode.Disposable {
     } finally {
       this.unregisterStream(requestId);
       this.debounceManager?.removeRequest(requestId);
+      const wasStillActive = this.currentRequestByDocument.get(docKey) === requestId;
       this.supersededRequests.delete(requestId);
-      if (this.currentRequestByDocument.get(docKey) === requestId) {
+      if (wasStillActive) {
         this.currentRequestByDocument.delete(docKey);
       }
-      this._onRequestFinished.fire(success);
+      this.pendingControllers.delete(requestId);
+      if (wasStillActive) {
+        this._onRequestFinished.fire(success);
+      }
     }
   }
 
