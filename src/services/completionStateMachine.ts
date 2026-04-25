@@ -11,6 +11,7 @@ import {
   IRecentFilesTracker,
   ITelemetryService,
   ILspSuggestionsTracker,
+  IRelatedEditsService,
 } from '../context/contracts';
 import { CompletionRequest, FeatureFlags, TriggerSource, SuggestionResult, AdditionalFileContext } from '../context/types';
 import { CompletionHeuristicsService } from './completionHeuristics';
@@ -72,6 +73,7 @@ export class CompletionStateMachine implements vscode.Disposable {
     private readonly recentFilesTracker?: IRecentFilesTracker,
     private readonly telemetryService?: ITelemetryService,
     private readonly lspSuggestionsTracker?: ILspSuggestionsTracker,
+    private readonly relatedEditsService?: IRelatedEditsService,
   ) {
     this.flags = configManager.features;
     configManager.onDidChange(() => {
@@ -153,18 +155,22 @@ export class CompletionStateMachine implements vscode.Disposable {
     this.telemetryService?.recordTriggerEvent(ctx.document, requestId, ctx.position, triggerSource);
 
     const diagnostics = vscode.languages.getDiagnostics(ctx.document.uri);
+    const provider = this.configManager.activeProvider;
+    const fimContextMode = provider.fimContextMode ?? 'augmented';
 
-    const additionalFiles = this.flags.enableAdditionalFilesContext && this.recentFilesTracker
+    const additionalFiles = this.flags.enableAdditionalFilesContext
+      && this.recentFilesTracker
+      && fimContextMode === 'augmented'
       ? await this.recentFilesTracker.getAdditionalFilesContext(ctx.document.uri)
       : undefined;
 
-    const lspContextFiles = await this.getLspDefinitionContext(ctx.document, ctx.position);
+    const lspContextFiles = fimContextMode === 'augmented'
+      ? await this.getLspDefinitionContext(ctx.document, ctx.position)
+      : [];
 
     const lspSuggestions = this.lspSuggestionsTracker
       ? this.lspSuggestionsTracker.getRelevantSuggestions(ctx.document.uri.toString())
       : undefined;
-
-    const provider = this.configManager.activeProvider;
 
     const requestContext: RequestContextOptions = {
       document: ctx.document,
@@ -235,6 +241,7 @@ export class CompletionStateMachine implements vscode.Disposable {
     this.telemetryService?.recordAcceptEvent(editor.document, requestId, acceptedLength ?? 0);
     void this.predictionController.handleSuggestionAccepted(editor);
     void this.recordDiagnosticsDiff(editor.document.uri, requestId, diagnosticsBefore);
+    void this.relatedEditsService?.checkRelatedEditsOnAccept(editor);
   }
 
   handlePartialAccept(

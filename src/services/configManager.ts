@@ -31,6 +31,7 @@ function createDefaultConfigTemplate(): ByokConfig {
         stopTokens: [],
         fimTemplate: null,
         customPrompt: null,
+        fimContextMode: 'augmented',
       },
     ],
     activeProvider: 'deepseek',
@@ -469,6 +470,10 @@ export class ConfigManager implements IConfigManager, vscode.Disposable {
         typeof value.customPrompt === 'string' || value.customPrompt === null
           ? value.customPrompt
           : fallback.customPrompt,
+      fimContextMode:
+        value.fimContextMode === 'strict' || value.fimContextMode === 'augmented'
+          ? value.fimContextMode
+          : fallback.fimContextMode,
       headers: isRecord(value.headers) ? value.headers as Record<string, string> : fallback.headers,
       extraBody: isRecord(value.extraBody) ? value.extraBody as Record<string, unknown> : fallback.extraBody,
     };

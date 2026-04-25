@@ -33,6 +33,12 @@ export interface ProviderConfig {
    * Custom system prompt. If null, a built-in default system prompt is used.
    */
   customPrompt: string | null;
+  /**
+   * Controls cross-file context injection for FIM completions.
+   * - 'strict': only prefix/suffix, no additional files or LSP context (faster, less token usage)
+   * - 'augmented': include recent files, LSP definitions, and diagnostics as context (default)
+   */
+  fimContextMode?: 'strict' | 'augmented';
   headers?: Record<string, string>;
   extraBody?: Record<string, unknown>;
 }

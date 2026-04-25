@@ -21,6 +21,8 @@ export interface ContextRankerOptions {
   currentFilePrefix: string;
   candidates: ContextRankerCandidate[];
   maxChars: number;
+  currentSymbol?: string;
+  importPaths?: string[];
 }
 
 interface ContextWindow {
@@ -49,6 +51,8 @@ const WINDOW_OVERLAP_LINES = 12;
 const WINDOW_MAX_CHARS = 1400;
 const MAX_WINDOWS_PER_FILE = 2;
 const CONTEXT_FILE_OVERHEAD = 80;
+const IMPORT_SPECIFIER_PATTERN =
+  /(?:import\s+[\s\S]*?\s+from\s+['"]([^'"]+)['"]|require\s*\(\s*['"]([^'"]+)['"]\s*\))/g;
 const LOW_SIGNAL_TOKENS = new Set([
   'a',
   'an',
@@ -115,7 +119,14 @@ export function selectRelevantContext(options: ContextRankerOptions): Additional
   const scoredWindows = windows
     .map((window) => ({
       ...window,
-      score: scoreWindow(window, prefixTokens, options.currentFilePath, now),
+      score: scoreWindow(
+        window,
+        prefixTokens,
+        options.currentFilePath,
+        now,
+        options.currentSymbol,
+        options.importPaths
+      ),
     }))
     .sort((left, right) => {
       if (right.score !== left.score) {
@@ -265,7 +276,9 @@ function scoreWindow(
   window: ContextWindow,
   prefixTokens: Set<string>,
   currentFilePath: string,
-  now: number
+  now: number,
+  currentSymbol?: string,
+  importPaths?: string[]
 ): number {
   const overlapCount = countTokenOverlap(prefixTokens, window.tokenSet);
   const unionSize = prefixTokens.size + window.tokenSet.size - overlapCount;
@@ -276,12 +289,79 @@ function scoreWindow(
     (window.origin === 'lsp' ? 0.12 : 0) +
     (window.isOpen ? 0.05 : 0) +
     getRecencyBoost(window.lastViewedAt, now);
+  const importBoost = Math.min(
+    extractImportSpecifiers(window.content).filter((candidateImport) =>
+      matchImportPath(candidateImport, importPaths ?? [])
+    ).length * 0.08,
+    0.16
+  );
+  const normalizedCurrentSymbol = currentSymbol?.trim().toLowerCase();
+  const symbolBoost = normalizedCurrentSymbol && window.tokenSet.has(normalizedCurrentSymbol)
+    ? 0.1
+    : 0;
 
   if (overlapCount === 0 && prefixTokens.size > 0) {
-    return structuralBoost * 0.5;
+    return structuralBoost * 0.5 + importBoost + symbolBoost;
   }
 
-  return jaccardScore + overlapBoost + structuralBoost;
+  return jaccardScore + overlapBoost + structuralBoost + importBoost + symbolBoost;
+}
+
+function extractImportSpecifiers(content: string): string[] {
+  const pattern = new RegExp(IMPORT_SPECIFIER_PATTERN);
+  const specifiers: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(content)) !== null) {
+    const specifier = (match[1] ?? match[2] ?? '').trim();
+    if (specifier) {
+      specifiers.push(specifier);
+    }
+  }
+
+  return specifiers;
+}
+
+function matchImportPath(candidateImport: string, currentImports: string[]): boolean {
+  const candidateParts = splitPath(candidateImport);
+  if (candidateParts.length === 0 || currentImports.length === 0) {
+    return false;
+  }
+
+  const candidateBasename = getImportBasename(candidateParts);
+
+  return currentImports.some((currentImport) => {
+    const currentParts = splitPath(currentImport);
+    if (currentParts.length === 0) {
+      return false;
+    }
+
+    if (hasPathSuffix(candidateParts, currentParts) || hasPathSuffix(currentParts, candidateParts)) {
+      return true;
+    }
+
+    return candidateBasename.length > 0 && candidateBasename === getImportBasename(currentParts);
+  });
+}
+
+function getImportBasename(parts: string[]): string {
+  const basename = parts[parts.length - 1] ?? '';
+  return basename.replace(/\.(?:d\.)?(?:[cm]?[jt]sx?)$/, '');
+}
+
+function hasPathSuffix(left: string[], right: string[]): boolean {
+  if (left.length === 0 || right.length === 0 || left.length > right.length) {
+    return false;
+  }
+
+  const offset = right.length - left.length;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[offset + index]) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function countTokenOverlap(left: Set<string>, right: Set<string>): number {

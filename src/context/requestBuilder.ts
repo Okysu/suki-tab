@@ -34,6 +34,9 @@ export interface RequestContextOptions {
   contextLength: number;
 }
 
+const IMPORT_SPECIFIER_PATTERN =
+  /(?:import\s+[\s\S]*?\s+from\s+['"]([^'"]+)['"]|require\s*\(\s*['"]([^'"]+)['"]\s*\))/g;
+
 export function buildCompletionRequest(options: RequestContextOptions): CompletionRequest {
   const maxChars = getMaxContextChars(options.contextLength);
   const prefixText = options.document
@@ -50,13 +53,15 @@ export function buildCompletionRequest(options: RequestContextOptions): Completi
   const prefix = truncatePrefix(prefixText, prefixChars);
   const suffix = extractSuffix(options.document, options.position, suffixChars);
   const filename = getFilename(options.document);
+  const currentSymbol = extractCurrentSymbol(options.document, options.position);
+  const importPaths = extractImportSpecifiers(prefixText);
 
   return {
     prefix,
     suffix,
     language: options.document.languageId,
     filename,
-    additionalFiles: buildRankedAdditionalFiles(options, additionalContextBudget, prefix),
+    additionalFiles: buildRankedAdditionalFiles(options, additionalContextBudget, prefix, currentSymbol, importPaths),
     diagnostics: formatDiagnostics(options.diagnostics ?? []),
     triggerSource: options.triggerSource ?? TriggerSource.Unknown,
   };
@@ -123,7 +128,9 @@ function getFilename(document: vscode.TextDocument): string {
 function buildRankedAdditionalFiles(
   options: RequestContextOptions,
   additionalContextBudget: number,
-  prefixText: string
+  prefixText: string,
+  currentSymbol?: string,
+  importPaths?: string[]
 ): AdditionalFileContext[] {
   if (additionalContextBudget <= 0) {
     return [];
@@ -145,6 +152,8 @@ function buildRankedAdditionalFiles(
     currentFilePrefix: rankingPrefix,
     candidates,
     maxChars: additionalContextBudget,
+    currentSymbol,
+    importPaths,
   });
 }
 
@@ -261,4 +270,29 @@ function truncateSuffix(text: string, maxChars: number): string {
   }
 
   return `${text.slice(0, availableChars)}\n${TRUNCATION_MARKER}`;
+}
+
+function extractCurrentSymbol(document: vscode.TextDocument, position: vscode.Position): string | undefined {
+  const symbolRange = document.getWordRangeAtPosition(position);
+  if (!symbolRange) {
+    return undefined;
+  }
+
+  const symbolText = document.getText(symbolRange).trim();
+  return symbolText.length >= 2 ? symbolText : undefined;
+}
+
+function extractImportSpecifiers(prefixText: string): string[] {
+  const pattern = new RegExp(IMPORT_SPECIFIER_PATTERN);
+  const specifiers: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(prefixText)) !== null) {
+    const specifier = (match[1] ?? match[2] ?? '').trim();
+    if (specifier) {
+      specifiers.push(specifier);
+    }
+  }
+
+  return specifiers;
 }

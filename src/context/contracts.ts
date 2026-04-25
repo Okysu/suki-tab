@@ -49,6 +49,7 @@ export interface IDocumentTracker extends vscode.Disposable {
 }
 
 export interface IRelatedEditsService extends vscode.Disposable {
+  checkRelatedEditsOnAccept(editor: vscode.TextEditor): void;
   reviewRelatedEdits(editor?: vscode.TextEditor): Promise<void>;
 }
 

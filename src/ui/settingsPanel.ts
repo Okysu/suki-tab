@@ -766,7 +766,7 @@ a:hover { text-decoration: underline; }
     const p = provider || {
       name: '', baseUrl: '', apiKey: '', apiType: 'completions',
       model: '', temperature: 0.2, maxTokens: 4096, contextLength: 8192,
-      stopTokens: [], fimTemplate: '', customPrompt: ''
+      stopTokens: [], fimTemplate: '', customPrompt: '', fimContextMode: 'augmented'
     };
     const title = isNew ? 'Add Provider' : 'Edit Provider: ' + esc(p.name);
 
@@ -797,6 +797,11 @@ a:hover { text-decoration: underline; }
         '<div class="form-group"><label>Context Length</label><input type="number" id="edit-contextLength" value="' + p.contextLength + '" min="1"></div>' +
         '<div class="form-group"><label>Stop Tokens (comma-separated)</label><input type="text" id="edit-stopTokens" value="' + escAttr((p.stopTokens || []).join(',')) + '" placeholder="\\\\n\\\\n,\\\\n"></div>' +
       '</div>' +
+      '<div class="form-group"><label>FIM Context Mode</label>' +
+        '<select id="edit-fimContextMode">' +
+          '<option value="augmented" ' + ((p.fimContextMode || 'augmented') === 'augmented' ? 'selected' : '') + '>augmented</option>' +
+          '<option value="strict" ' + (p.fimContextMode === 'strict' ? 'selected' : '') + '>strict</option>' +
+        '</select></div>' +
       '<div class="form-group"><label>FIM Template (optional, chat mode only)</label><textarea id="edit-fimTemplate" placeholder="{prefix}, {suffix}, {language}, {filename}">' + esc(p.fimTemplate || '') + '</textarea></div>' +
       '<div class="form-group"><label>Custom System Prompt (optional)</label><textarea id="edit-customPrompt" placeholder="Leave blank for default system prompt.">' + esc(p.customPrompt || '') + '</textarea></div>' +
       '<div class="form-group"><label>Extra Headers (JSON, optional)</label><textarea id="edit-headers" placeholder="e.g. {&quot;X-Custom-Header&quot;: &quot;value&quot;}">' + esc(p.headers ? JSON.stringify(p.headers) : '') + '</textarea></div>' +
@@ -859,6 +864,7 @@ a:hover { text-decoration: underline; }
     const maxTokens = parseInt(document.getElementById('edit-maxTokens').value, 10) || 4096;
     const contextLength = parseInt(document.getElementById('edit-contextLength').value, 10) || 8192;
     const stopTokens = document.getElementById('edit-stopTokens').value.split(',').map(s => s.trim()).filter(s => s.length > 0);
+    const fimContextMode = document.getElementById('edit-fimContextMode').value === 'strict' ? 'strict' : 'augmented';
     const fimTemplate = document.getElementById('edit-fimTemplate').value || null;
     const customPrompt = document.getElementById('edit-customPrompt').value || null;
 
@@ -881,7 +887,7 @@ a:hover { text-decoration: underline; }
 
     const provider = {
       name, baseUrl, apiKey, apiType, model, temperature,
-      maxTokens, contextLength, stopTokens, fimTemplate, customPrompt,
+      maxTokens, contextLength, stopTokens, fimContextMode, fimTemplate, customPrompt,
       ...(headers ? { headers } : {}),
       ...(extraBody ? { extraBody } : {}),
     };

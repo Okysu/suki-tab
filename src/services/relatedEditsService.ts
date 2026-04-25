@@ -11,6 +11,10 @@ export class RelatedEditsService implements vscode.Disposable, IRelatedEditsServ
 
   dispose(): void {}
 
+  checkRelatedEditsOnAccept(editor: vscode.TextEditor): void {
+    void this.checkRelatedEditsOnAcceptInternal(editor);
+  }
+
   async reviewRelatedEdits(editor: vscode.TextEditor | undefined = vscode.window.activeTextEditor): Promise<void> {
     if (!editor) {
       void vscode.window.showWarningMessage('SukiTab: Open an editor to review related edits.');
@@ -82,6 +86,70 @@ export class RelatedEditsService implements vscode.Disposable, IRelatedEditsServ
     void vscode.window.showInformationMessage(
       `SukiTab: Applied ${totalEdits} related edit(s) across ${selectedFiles.length} file(s).`
     );
+  }
+
+  private async checkRelatedEditsOnAcceptInternal(editor: vscode.TextEditor): Promise<void> {
+    const acceptedDocumentVersion = editor.document.version;
+
+    try {
+      await new Promise<void>((resolve) => setTimeout(resolve, 200));
+
+      if (editor.document.version !== acceptedDocumentVersion) {
+        return;
+      }
+
+      const position = editor.selection.active;
+      const symbolRange = this.getSymbolRangeAtAcceptedPosition(editor, position);
+      if (!symbolRange) {
+        return;
+      }
+
+      const symbolText = editor.document.getText(symbolRange);
+      const trimmedSymbolText = symbolText.trim();
+      if (!trimmedSymbolText || trimmedSymbolText.length < 2) {
+        return;
+      }
+
+      let references: vscode.Location[] | undefined;
+      try {
+        references = await Promise.race([
+          vscode.commands.executeCommand<vscode.Location[]>(
+            'vscode.executeReferenceProvider',
+            editor.document.uri,
+            position,
+          ),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('timeout')), 300)
+          ),
+        ]);
+      } catch {
+        return;
+      }
+
+      if (!references || references.length === 0) {
+        return;
+      }
+
+      const currentUriStr = editor.document.uri.toString();
+      const otherFileRefs = references.filter((loc) => loc.uri.toString() !== currentUriStr);
+
+      if (otherFileRefs.length < 2) {
+        return;
+      }
+
+      const action = await vscode.window.showInformationMessage(
+        `SukiTab: Found ${otherFileRefs.length} reference(s) to "${symbolText}" in other files. Review related edits?`,
+        'Review',
+        'Dismiss'
+      );
+
+      if (action === 'Review') {
+        await this.reviewRelatedEdits(editor);
+      }
+    } catch (error) {
+      const details = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`[RelatedEdits] Auto-check failed: ${details}`);
+    }
   }
 
   private async findMatchingReferences(
@@ -288,5 +356,21 @@ export class RelatedEditsService implements vscode.Disposable, IRelatedEditsServ
       return value;
     }
     return `${value.slice(0, maxLength - 1)}…`;
+  }
+
+  private getSymbolRangeAtAcceptedPosition(
+    editor: vscode.TextEditor,
+    position: vscode.Position,
+  ): vscode.Range | undefined {
+    const directRange = editor.document.getWordRangeAtPosition(position);
+    if (directRange) {
+      return directRange;
+    }
+
+    if (position.character <= 0) {
+      return undefined;
+    }
+
+    return editor.document.getWordRangeAtPosition(position.translate(0, -1));
   }
 }

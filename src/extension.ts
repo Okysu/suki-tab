@@ -65,6 +65,7 @@ export async function activate(context: vscode.ExtensionContext) {
 			c.resolve('recentFilesTracker'),
 			c.resolve('telemetryService'),
 			c.resolve('lspSuggestionsTracker'),
+			c.resolve('relatedEditsService'),
 		)
 	);
 
@@ -150,7 +151,6 @@ export async function activate(context: vscode.ExtensionContext) {
 	);
 
 	context.subscriptions.push(
-		// Manual-only MVP: review references for the current symbol instead of guessing rename intent from edit history.
 		vscode.commands.registerCommand('suki-tab.reviewRelatedEdits', () => {
 			return relatedEditsService.reviewRelatedEdits(vscode.window.activeTextEditor);
 		}),
