@@ -11,9 +11,10 @@ interface TrackedFile {
   lastViewedAt: number;
 }
 
-const MAX_FILE_AGE_MS = 60000; // 60 seconds - files viewed longer ago are pruned
-const MAX_TRACKED_FILES = 20;
-const MAX_LINE_LENGTH = 512; // Truncate lines longer than this
+const MAX_FILE_AGE_MS = 600000; // 10 minutes
+const MAX_TRACKED_FILES = 30;
+const MAX_LINE_LENGTH = 512;
+const MAX_FILE_LINES = 200;
 
 /**
  * Tracks recently viewed files and their visible ranges.
@@ -133,6 +134,34 @@ export class RecentFilesTracker implements vscode.Disposable {
       if (info) {
         this.logger.info(`[RecentFiles] Added visible editor: ${relativePath}, ranges=${editor.visibleRanges.length}`);
         result.push(info);
+      }
+    }
+
+    // Add files open in tab groups (not just visible editors)
+    const resultPaths = new Set(result.map((r) => r.relativeWorkspacePath));
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        if (!(tab.input instanceof vscode.TabInputText)) { continue; }
+        const uri = tab.input.uri;
+        const key = uri.toString();
+        if (key === currentKey) { continue; }
+        const relativePath = vscode.workspace.asRelativePath(uri, false);
+        if (relativePath === currentRelative) { continue; }
+        if (resultPaths.has(relativePath)) { continue; }
+
+        try {
+          const doc = await vscode.workspace.openTextDocument(uri);
+          const endLine = Math.min(doc.lineCount, MAX_FILE_LINES);
+          const syntheticRange = new vscode.Range(0, 0, endLine, 0);
+          const info = await this.buildFileInfo(uri, [syntheticRange], false, undefined, doc);
+          if (info) {
+            this.logger.info(`[RecentFiles] Added tab group file: ${relativePath}, lines=${endLine}`);
+            result.push(info);
+            resultPaths.add(relativePath);
+          }
+        } catch {
+          // File may not be accessible
+        }
       }
     }
 

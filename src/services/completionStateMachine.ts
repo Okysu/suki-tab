@@ -12,7 +12,7 @@ import {
   ITelemetryService,
   ILspSuggestionsTracker,
 } from '../context/contracts';
-import { CompletionRequest, FeatureFlags, TriggerSource, SuggestionResult } from '../context/types';
+import { CompletionRequest, FeatureFlags, TriggerSource, SuggestionResult, AdditionalFileContext } from '../context/types';
 import { CompletionHeuristicsService } from './completionHeuristics';
 import { InlineEditTriggerer } from './inlineEditTriggerer';
 
@@ -158,6 +158,8 @@ export class CompletionStateMachine implements vscode.Disposable {
       ? await this.recentFilesTracker.getAdditionalFilesContext(ctx.document.uri)
       : undefined;
 
+    const lspContextFiles = await this.getLspDefinitionContext(ctx.document, ctx.position);
+
     const lspSuggestions = this.lspSuggestionsTracker
       ? this.lspSuggestionsTracker.getRelevantSuggestions(ctx.document.uri.toString())
       : undefined;
@@ -168,6 +170,7 @@ export class CompletionStateMachine implements vscode.Disposable {
       document: ctx.document,
       position: ctx.position,
       additionalFiles,
+      lspContextFiles,
       diagnostics,
       lspSuggestions,
       triggerSource,
@@ -228,8 +231,10 @@ export class CompletionStateMachine implements vscode.Disposable {
   ): Promise<void> {
     if (!requestId) {return;}
 
+    const diagnosticsBefore = vscode.languages.getDiagnostics(editor.document.uri);
     this.telemetryService?.recordAcceptEvent(editor.document, requestId, acceptedLength ?? 0);
     void this.predictionController.handleSuggestionAccepted(editor);
+    void this.recordDiagnosticsDiff(editor.document.uri, requestId, diagnosticsBefore);
   }
 
   handlePartialAccept(
@@ -257,6 +262,126 @@ export class CompletionStateMachine implements vscode.Disposable {
         this.telemetryService?.recordRejectEvent(editor.document, requestId);
       }
     }
+  }
+
+  private async recordDiagnosticsDiff(
+    uri: vscode.Uri,
+    requestId: string,
+    before: readonly vscode.Diagnostic[],
+  ): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const after = vscode.languages.getDiagnostics(uri);
+
+    const beforeKeys = new Set(before.map((d) => this.getDiagnosticKey(d)));
+    const afterKeys = new Set(after.map((d) => this.getDiagnosticKey(d)));
+
+    let resolved = 0;
+    for (const key of beforeKeys) {
+      if (!afterKeys.has(key)) {
+        resolved += 1;
+      }
+    }
+
+    let introduced = 0;
+    for (const key of afterKeys) {
+      if (!beforeKeys.has(key)) {
+        introduced += 1;
+      }
+    }
+
+    let unchanged = 0;
+    for (const key of beforeKeys) {
+      if (afterKeys.has(key)) {
+        unchanged += 1;
+      }
+    }
+
+    this.telemetryService?.recordDiagnosticsDiff(requestId, {
+      resolved,
+      introduced,
+      unchanged,
+    });
+  }
+
+  private getDiagnosticKey(diagnostic: vscode.Diagnostic): string {
+    return [
+      diagnostic.severity,
+      diagnostic.range.start.line,
+      diagnostic.range.start.character,
+      diagnostic.range.end.line,
+      diagnostic.range.end.character,
+      diagnostic.message.replace(/\s+/g, ' ').trim(),
+    ].join('|');
+  }
+
+  private async getLspDefinitionContext(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+  ): Promise<AdditionalFileContext[]> {
+    const results: AdditionalFileContext[] = [];
+    const visitedUris = new Set<string>();
+    const currentUriStr = document.uri.toString();
+    const LSP_RADIUS_LINES = 30;
+    const MAX_DEFINITIONS = 3;
+    let count = 0;
+
+    const commands = [
+      'vscode.executeDefinitionProvider',
+      'vscode.executeTypeDefinitionProvider',
+    ] as const;
+
+    for (const cmd of commands) {
+      if (count >= MAX_DEFINITIONS) { break; }
+
+      let locations: (vscode.Location | vscode.LocationLink)[] = [];
+      try {
+        locations = await Promise.race([
+          vscode.commands.executeCommand<(vscode.Location | vscode.LocationLink)[]>(
+            cmd, document.uri, position,
+          ),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('timeout')), 300),
+          ),
+        ]);
+      } catch {
+        continue;
+      }
+
+      if (!locations) { continue; }
+
+      for (const loc of locations) {
+        if (count >= MAX_DEFINITIONS) { break; }
+
+        const uri = 'targetUri' in loc ? loc.targetUri : loc.uri;
+        const range = 'targetRange' in loc ? loc.targetRange : loc.range;
+        const uriStr = uri.toString();
+
+        if (uriStr === currentUriStr) { continue; }
+        if (visitedUris.has(uriStr)) { continue; }
+        visitedUris.add(uriStr);
+
+        const relativePath = vscode.workspace.asRelativePath(uri, false);
+        if (!relativePath || relativePath === document.uri.fsPath) { continue; }
+
+        try {
+          const defDoc = await vscode.workspace.openTextDocument(uri);
+          const startLine = Math.max(0, range.start.line - LSP_RADIUS_LINES);
+          const endLine = Math.min(defDoc.lineCount - 1, range.end.line + LSP_RADIUS_LINES);
+          const contentRange = new vscode.Range(startLine, 0, endLine + 1, 0);
+          const content = defDoc.getText(contentRange);
+
+          if (content.trim()) {
+            results.push({ path: relativePath, content });
+            count++;
+            this.logger.info(`[LSP] Added definition context: ${relativePath} (line ${range.start.line})`);
+          }
+        } catch {
+          // File not accessible
+        }
+      }
+    }
+
+    return results;
   }
 
   private async consumeStream(

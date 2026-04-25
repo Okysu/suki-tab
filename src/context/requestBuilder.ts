@@ -1,4 +1,9 @@
 import * as vscode from 'vscode';
+import {
+  ContextRankerCandidate,
+  ContextRankerSection,
+  selectRelevantContext,
+} from './contextRanker';
 import { TriggerSource } from './types';
 import type {
   CompletionRequest,
@@ -11,11 +16,17 @@ import type {
 const CHARS_PER_TOKEN = 4;
 const PREFIX_RATIO = 0.7;
 const TRUNCATION_MARKER = '// ... truncated ...';
+const ADDITIONAL_CONTEXT_RATIO = 0.2;
+const MIN_PRIMARY_CONTEXT_CHARS = 1200;
+const MIN_ADDITIONAL_CONTEXT_CHARS = 1200;
+const MAX_ADDITIONAL_CONTEXT_CHARS = 6000;
+const MAX_RANKING_PREFIX_CHARS = 6000;
 
 export interface RequestContextOptions {
   document: vscode.TextDocument;
   position: vscode.Position;
   additionalFiles?: AdditionalFileInfo[];
+  lspContextFiles?: AdditionalFileContext[];
   diagnostics?: vscode.Diagnostic[];
   lspSuggestions?: LspSuggestionsContext;
   parameterHints?: ParameterHintsContext;
@@ -25,15 +36,27 @@ export interface RequestContextOptions {
 
 export function buildCompletionRequest(options: RequestContextOptions): CompletionRequest {
   const maxChars = getMaxContextChars(options.contextLength);
-  const prefixChars = Math.max(Math.floor(maxChars * PREFIX_RATIO), 0);
-  const suffixChars = Math.max(maxChars - prefixChars, 0);
+  const prefixText = options.document
+    .getText()
+    .slice(0, options.document.offsetAt(options.position));
+  const additionalContextBudget = getAdditionalContextBudget(
+    maxChars,
+    options.additionalFiles ?? [],
+    options.lspContextFiles ?? []
+  );
+  const primaryContextChars = Math.max(maxChars - additionalContextBudget, 0);
+  const prefixChars = Math.max(Math.floor(primaryContextChars * PREFIX_RATIO), 0);
+  const suffixChars = Math.max(primaryContextChars - prefixChars, 0);
+  const prefix = truncatePrefix(prefixText, prefixChars);
+  const suffix = extractSuffix(options.document, options.position, suffixChars);
+  const filename = getFilename(options.document);
 
   return {
-    prefix: extractPrefix(options.document, options.position, prefixChars),
-    suffix: extractSuffix(options.document, options.position, suffixChars),
+    prefix,
+    suffix,
     language: options.document.languageId,
-    filename: getFilename(options.document),
-    additionalFiles: buildAdditionalFiles(options.additionalFiles ?? []),
+    filename,
+    additionalFiles: buildRankedAdditionalFiles(options, additionalContextBudget, prefix),
     diagnostics: formatDiagnostics(options.diagnostics ?? []),
     triggerSource: options.triggerSource ?? TriggerSource.Unknown,
   };
@@ -97,14 +120,57 @@ function getFilename(document: vscode.TextDocument): string {
   return relativePath || document.fileName;
 }
 
-function buildAdditionalFiles(files: AdditionalFileInfo[]): AdditionalFileContext[] {
-  return files.map((file) => ({
-    path: file.relativeWorkspacePath,
-    content: formatAdditionalFileContent(file),
-  }));
+function buildRankedAdditionalFiles(
+  options: RequestContextOptions,
+  additionalContextBudget: number,
+  prefixText: string
+): AdditionalFileContext[] {
+  if (additionalContextBudget <= 0) {
+    return [];
+  }
+
+  const candidates = [
+    ...buildRecentFileCandidates(options.additionalFiles ?? []),
+    ...buildLspFileCandidates(options.lspContextFiles ?? []),
+  ];
+
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  const rankingPrefix = prefixText.slice(-Math.min(MAX_RANKING_PREFIX_CHARS, prefixText.length));
+
+  return selectRelevantContext({
+    currentFilePath: getFilename(options.document),
+    currentFilePrefix: rankingPrefix,
+    candidates,
+    maxChars: additionalContextBudget,
+  });
 }
 
-function formatAdditionalFileContent(file: AdditionalFileInfo): string {
+function buildRecentFileCandidates(files: AdditionalFileInfo[]): ContextRankerCandidate[] {
+  return files
+    .map((file) => ({
+      path: file.relativeWorkspacePath,
+      sections: buildRecentFileSections(file),
+      origin: 'recent' as const,
+      isOpen: file.isOpen,
+      lastViewedAt: file.lastViewedAt,
+    }))
+    .filter((candidate) => candidate.sections.length > 0);
+}
+
+function buildLspFileCandidates(files: AdditionalFileContext[]): ContextRankerCandidate[] {
+  return files
+    .map((file) => ({
+      path: file.path,
+      sections: [{ content: file.content }],
+      origin: 'lsp' as const,
+    }))
+    .filter((candidate) => candidate.sections.some((section) => section.content.trim().length > 0));
+}
+
+function buildRecentFileSections(file: AdditionalFileInfo): ContextRankerSection[] {
   const sectionCount = Math.max(
     file.visibleRanges.length,
     file.visibleRangeContent.length,
@@ -112,23 +178,55 @@ function formatAdditionalFileContent(file: AdditionalFileInfo): string {
   );
 
   if (sectionCount === 0) {
-    return '';
+    return [];
   }
 
-  const sections: string[] = [];
+  const sections: ContextRankerSection[] = [];
 
   for (let index = 0; index < sectionCount; index += 1) {
-    const content = file.visibleRangeContent[index] ?? '';
+    const content = (file.visibleRangeContent[index] ?? '').trim();
     const range = file.visibleRanges[index];
     const startLine = file.startLineNumberOneIndexed[index] ?? range?.startLineNumber ?? 1;
     const inferredEndLine = startLine + countNewlines(content);
     const endLine = range?.endLineNumberInclusive ?? inferredEndLine;
-    const lineLabel = startLine === endLine ? `${startLine}` : `${startLine}-${endLine}`;
 
-    sections.push(content ? `lines ${lineLabel}\n${content}` : `lines ${lineLabel}`);
+    if (!content) {
+      continue;
+    }
+
+    sections.push({
+      content,
+      startLine,
+      endLine,
+    });
   }
 
-  return sections.join('\n\n');
+  return sections;
+}
+
+function getAdditionalContextBudget(
+  maxChars: number,
+  additionalFiles: AdditionalFileInfo[],
+  lspContextFiles: AdditionalFileContext[]
+): number {
+  if (maxChars <= MIN_PRIMARY_CONTEXT_CHARS) {
+    return 0;
+  }
+
+  const hasCandidates = additionalFiles.length > 0 || lspContextFiles.length > 0;
+  if (!hasCandidates) {
+    return 0;
+  }
+
+  const proportionalBudget = Math.floor(maxChars * ADDITIONAL_CONTEXT_RATIO);
+  const maxAllowedBudget = Math.max(maxChars - MIN_PRIMARY_CONTEXT_CHARS, 0);
+  const boundedBudget = Math.min(proportionalBudget, MAX_ADDITIONAL_CONTEXT_CHARS, maxAllowedBudget);
+
+  if (boundedBudget <= 0) {
+    return 0;
+  }
+
+  return Math.max(Math.min(MIN_ADDITIONAL_CONTEXT_CHARS, maxAllowedBudget), boundedBudget);
 }
 
 function truncatePrefix(text: string, maxChars: number): string {

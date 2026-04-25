@@ -13,6 +13,8 @@ export interface SessionStatistics {
   sessionStartTime: number;
   avgGenerationTimeMs: number;
   acceptRate: number;
+  diagnosticsResolved: number;
+  diagnosticsIntroduced: number;
 }
 
 export enum CompletionEventType {
@@ -23,6 +25,7 @@ export enum CompletionEventType {
   PartialAccept = 'partial_accept',
   GenerationFinished = 'generation_finished',
   LspSuggestion = 'lsp_suggestion',
+  DiagnosticsDiff = 'diagnostics_diff',
 }
 
 interface CompletionEventBase {
@@ -73,6 +76,13 @@ export interface CompletionLspSuggestionEvent extends CompletionEventBase {
   labels: string[];
 }
 
+export interface CompletionDiagnosticsDiffEvent extends CompletionEventBase {
+  type: CompletionEventType.DiagnosticsDiff;
+  resolved: number;
+  introduced: number;
+  unchanged: number;
+}
+
 type CompletionEvent =
   | CompletionTriggerEvent
   | CompletionSuggestionEvent
@@ -80,7 +90,8 @@ type CompletionEvent =
   | CompletionRejectEvent
   | CompletionPartialAcceptEvent
   | CompletionGenerationFinishedEvent
-  | CompletionLspSuggestionEvent;
+  | CompletionLspSuggestionEvent
+  | CompletionDiagnosticsDiffEvent;
 
 const MAX_EVENTS = 100;
 
@@ -98,6 +109,8 @@ export class TelemetryService implements vscode.Disposable {
     triggersBySource: {} as Record<string, number>,
     generationTimes: [] as number[],
     sessionStartTime: Date.now(),
+    diagnosticsResolved: 0,
+    diagnosticsIntroduced: 0,
   };
 
   private readonly _onStatsChanged = new vscode.EventEmitter<SessionStatistics>();
@@ -273,6 +286,27 @@ export class TelemetryService implements vscode.Disposable {
     this.logger.info(`[Telemetry] LSP suggestions: ${labels.length} items`);
   }
 
+  recordDiagnosticsDiff(
+    requestId: string,
+    payload: { resolved: number; introduced: number; unchanged: number },
+  ): void {
+    const event: CompletionDiagnosticsDiffEvent = {
+      type: CompletionEventType.DiagnosticsDiff,
+      timestamp: Date.now(),
+      requestId,
+      resolved: payload.resolved,
+      introduced: payload.introduced,
+      unchanged: payload.unchanged,
+    };
+    this.addEvent(event);
+    this.stats.diagnosticsResolved += payload.resolved;
+    this.stats.diagnosticsIntroduced += payload.introduced;
+    this.notifyStatsChanged();
+    this.logger.info(
+      `[Telemetry] Diagnostics diff: resolved=${payload.resolved}, introduced=${payload.introduced}, unchanged=${payload.unchanged}`,
+    );
+  }
+
   getRecentEvents(count = 20): CompletionEvent[] {
     return this.events.slice(-count);
   }
@@ -305,6 +339,8 @@ export class TelemetryService implements vscode.Disposable {
       sessionStartTime: this.stats.sessionStartTime,
       avgGenerationTimeMs: Math.round(avgTime),
       acceptRate: Math.round(acceptRate * 100) / 100,
+      diagnosticsResolved: this.stats.diagnosticsResolved,
+      diagnosticsIntroduced: this.stats.diagnosticsIntroduced,
     };
   }
 
@@ -319,6 +355,8 @@ export class TelemetryService implements vscode.Disposable {
       triggersBySource: {},
       generationTimes: [],
       sessionStartTime: Date.now(),
+      diagnosticsResolved: 0,
+      diagnosticsIntroduced: 0,
     };
     this.notifyStatsChanged();
     this.logger.info('[Telemetry] Statistics reset');

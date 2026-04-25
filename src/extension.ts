@@ -21,6 +21,8 @@ import { ensureProposedApiEnabled, resetIgnoreProposalCheck, checkAndPromptPropo
 import { StatusBar, StatusBarState } from './ui/statusBar';
 import { SettingsPanel } from './ui/settingsPanel';
 import { StatusBarPicker } from './ui/statusBarPicker';
+import { IRelatedEditsService } from './context/contracts';
+import { RelatedEditsService } from './services/relatedEditsService';
 
 export async function activate(context: vscode.ExtensionContext) {
 	const extensionId = 'Okysu.suki-tab';
@@ -39,6 +41,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	container.registerSingleton('telemetryService', (c) => new TelemetryService(c.resolve('logger')));
 	container.registerSingleton('lspSuggestionsTracker', (c) => new LspSuggestionsTracker(c.resolve('logger')));
 	container.registerSingleton('diagnosticsTracker', (c) => new DiagnosticsTracker(c.resolve('logger')));
+	container.registerSingleton('relatedEditsService', (c) => new RelatedEditsService(c.resolve('logger')));
 
 	const logger = container.resolve<Logger>('logger');
 	const configManager = container.resolve<ConfigManager>('configManager');
@@ -68,6 +71,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	const stateMachine = container.resolve<CompletionStateMachine>('stateMachine');
 	const diagnosticsTracker = container.resolve<DiagnosticsTracker>('diagnosticsTracker');
 	const lspSuggestionsTracker = container.resolve<LspSuggestionsTracker>('lspSuggestionsTracker');
+	const relatedEditsService = container.resolve<IRelatedEditsService>('relatedEditsService');
 	const inlineEditTriggerer = stateMachine.getInlineEditTriggerer();
 
 	diagnosticsTracker.onNewErrors(({ document, position }) => {
@@ -142,6 +146,13 @@ export async function activate(context: vscode.ExtensionContext) {
 			if (editor && !snoozeService.isSnoozing()) {
 				inlineEditTriggerer.manualTrigger(editor.document, editor.selection.active, TriggerSource.ManualTrigger);
 			}
+		}),
+	);
+
+	context.subscriptions.push(
+		// Manual-only MVP: review references for the current symbol instead of guessing rename intent from edit history.
+		vscode.commands.registerCommand('suki-tab.reviewRelatedEdits', () => {
+			return relatedEditsService.reviewRelatedEdits(vscode.window.activeTextEditor);
 		}),
 	);
 

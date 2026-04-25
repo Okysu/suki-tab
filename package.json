@@ -66,6 +66,10 @@
         "title": "SukiTab: Trigger Completion"
       },
       {
+        "command": "suki-tab.reviewRelatedEdits",
+        "title": "SukiTab: Review Related Edits"
+      },
+      {
         "command": "suki-tab.showSnoozePicker",
         "title": "SukiTab: Snooze Completions"
       },

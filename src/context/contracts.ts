@@ -48,6 +48,10 @@ export interface IDocumentTracker extends vscode.Disposable {
   getHistoryWithTimestamps(uri: vscode.Uri): Array<{ timestamp: number; change: string }>;
 }
 
+export interface IRelatedEditsService extends vscode.Disposable {
+  reviewRelatedEdits(editor?: vscode.TextEditor): Promise<void>;
+}
+
 export interface IPredictionController extends vscode.Disposable {
   handleSuggestionAccepted(editor: vscode.TextEditor): Promise<void>;
   clearForDocument(document: vscode.TextDocument): void;
@@ -108,4 +112,12 @@ export interface ITelemetryService extends vscode.Disposable {
     kind: 'word' | 'line' | 'suggest' | 'unknown'
   ): void;
   recordGenerationFinished(requestId: string, success: boolean): void;
+  recordDiagnosticsDiff(
+    requestId: string,
+    payload: {
+      resolved: number;
+      introduced: number;
+      unchanged: number;
+    }
+  ): void;
 }
