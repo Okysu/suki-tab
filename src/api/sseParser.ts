@@ -36,7 +36,7 @@ export async function* parseSSEStream(
         continue;
       }
 
-      if (apiType === 'completions') {
+      if (apiType === 'completions-deepseek' || apiType === 'completions') {
         const text = json.choices?.[0]?.text;
         if (text) {
           yield { type: 'text', content: text };
