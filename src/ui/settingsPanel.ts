@@ -764,7 +764,7 @@ a:hover { text-decoration: underline; }
     const container = $('#editFormContainer');
     const isNew = !provider;
     const p = provider || {
-      name: '', baseUrl: '', apiKey: '', apiType: 'completions-deepseek',
+      name: '', baseUrl: '', apiKey: '', apiType: 'completions',
       model: '', temperature: 0.2, maxTokens: 4096, contextLength: 8192,
       stopTokens: [], fimTemplate: '', customPrompt: '', fimContextMode: 'augmented'
     };
@@ -785,11 +785,8 @@ a:hover { text-decoration: underline; }
       '</div>' +
       '<div class="form-row">' +
         '<div class="form-group"><label>API Type</label>' +
-          '<select id="edit-apiType">' +
-          '<option value="completions-deepseek" ' + (p.apiType === 'completions-deepseek' ? 'selected' : '') + '>completions-deepseek (FIM with suffix)</option>' +
-          '<option value="completions" ' + (p.apiType === 'completions' ? 'selected' : '') + '>completions (FIM via prompt)</option>' +
-          '<option value="chat" ' + (p.apiType === 'chat' ? 'selected' : '') + '>chat</option>' +
-          '</select></div>' +
+          '<select id="edit-apiType"><option value="completions" ' + (p.apiType === 'completions' ? 'selected' : '') + '>completions</option>' +
+          '<option value="chat" ' + (p.apiType === 'chat' ? 'selected' : '') + '>chat</option></select></div>' +
         '<div class="form-group"><label>Model</label><input type="text" id="edit-model" value="' + escAttr(p.model) + '" placeholder="e.g. gpt-4o-mini"></div>' +
       '</div>' +
       '<div class="form-row">' +

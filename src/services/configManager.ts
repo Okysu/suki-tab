@@ -23,7 +23,7 @@ function createDefaultConfigTemplate(): ByokConfig {
         name: 'deepseek',
         baseUrl: 'https://api.deepseek.com/beta',
         apiKey: '',
-        apiType: 'completions-deepseek',
+        apiType: 'completions',
         model: 'deepseek-chat',
         temperature: 0.2,
         maxTokens: 4096,
@@ -445,9 +445,7 @@ export class ConfigManager implements IConfigManager, vscode.Disposable {
       baseUrl: typeof value.baseUrl === 'string' ? value.baseUrl.trim() : fallback.baseUrl,
       apiKey: typeof value.apiKey === 'string' ? value.apiKey.trim() : fallback.apiKey,
       apiType:
-        value.apiType === 'completions-deepseek' || value.apiType === 'completions' || value.apiType === 'chat'
-          ? value.apiType
-          : fallback.apiType,
+        value.apiType === 'chat' || value.apiType === 'completions' ? value.apiType : fallback.apiType,
       model: typeof value.model === 'string' ? value.model.trim() : fallback.model,
       temperature:
         typeof value.temperature === 'number' && Number.isFinite(value.temperature)

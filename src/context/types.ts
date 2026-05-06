@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 
-export type ApiType = 'completions-deepseek' | 'completions' | 'chat';
+export type ApiType = 'completions' | 'chat';
 
 /** Single provider definition in the config file */
 export interface ProviderConfig {
@@ -10,11 +10,7 @@ export interface ProviderConfig {
   baseUrl: string;
   /** API key for authentication */
   apiKey: string;
-  /** Which API route to use:
-   * - 'completions-deepseek': /v1/completions with native FIM (prompt + suffix fields, e.g. DeepSeek)
-   * - 'completions': /v1/completions with prompt only (OpenAI standard, uses fimTemplate to compose FIM prompt)
-   * - 'chat': /v1/chat/completions with messages (uses fimTemplate or default XML prompt)
-   */
+  /** Which API route to use: completions (/v1/completions) or chat (/v1/chat/completions) */
   apiType: ApiType;
   /** Model name to send in requests */
   model: string;
@@ -27,12 +23,10 @@ export interface ProviderConfig {
   /** Stop sequences for generation */
   stopTokens: string[];
   /**
-   * FIM template used when apiType is 'completions' or 'chat'.
+   * FIM template for chat mode only.
    * Supports placeholders: {prefix}, {suffix}, {language}, {filename}
-   * If null:
-   *   - apiType='completions': built-in <|fim_prefix|>/<|fim_suffix|>/<|fim_middle|> ChatML template is used
-   *   - apiType='chat': built-in XML prompt format is used
-   * Ignored when apiType='completions-deepseek' (native prompt+suffix fields).
+   * If null and apiType=chat, a default prompt format is used.
+   * Ignored when apiType=completions (native prompt+suffix).
    */
   fimTemplate: string | null;
   /**

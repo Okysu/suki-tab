@@ -24,9 +24,6 @@ type StreamState = {
 const DEFAULT_SYSTEM_PROMPT =
   'You are an expert code completion assistant. Continue the code at the cursor position. Output ONLY the code to insert, no explanations or markdown.';
 
-const DEFAULT_COMPLETIONS_FIM_TEMPLATE =
-  '<|im_start|>system\nYou are a code completion assistant.<|im_end|>\n<|im_start|>user\n<|fim_prefix|>{prefix}<|fim_suffix|>{suffix}<|fim_middle|><|im_end|>\n<|im_start|>assistant';
-
 const DEFAULT_CHAT_STOP_TOKENS: string[] = [];
 
 export class OpenAIClient implements ILLMClient {
@@ -229,7 +226,7 @@ export class OpenAIClient implements ILLMClient {
   }
 
   private buildStreamBody(provider: ProviderConfig, request: CompletionRequest): object {
-    if (provider.apiType === 'completions-deepseek') {
+    if (provider.apiType === 'completions') {
       return {
         model: provider.model,
         prompt: request.prefix,
@@ -237,34 +234,6 @@ export class OpenAIClient implements ILLMClient {
         max_tokens: provider.maxTokens,
         temperature: provider.temperature,
         ...(provider.stopTokens.length > 0 ? { stop: provider.stopTokens } : {}),
-        stream: true,
-        ...provider.extraBody,
-      };
-    }
-
-    if (provider.apiType === 'completions') {
-      const prompt = provider.fimTemplate
-        ? this.applyFIMTemplate(provider.fimTemplate, {
-            prefix: request.prefix,
-            suffix: request.suffix,
-            language: request.language,
-            filename: request.filename,
-          })
-        : this.applyFIMTemplate(DEFAULT_COMPLETIONS_FIM_TEMPLATE, {
-            prefix: request.prefix,
-            suffix: request.suffix,
-            language: request.language,
-            filename: request.filename,
-          });
-
-      return {
-        model: provider.model,
-        prompt,
-        max_tokens: provider.maxTokens,
-        temperature: provider.temperature,
-        ...(provider.stopTokens.length > 0
-          ? { stop: this.mergeStopTokens(provider.stopTokens, this.getFIMStopTokens(provider)) }
-          : {}),
         stream: true,
         ...provider.extraBody,
       };
@@ -284,7 +253,7 @@ export class OpenAIClient implements ILLMClient {
   }
 
   private buildConnectionTestBody(provider: ProviderConfig): object {
-    if (provider.apiType === 'completions-deepseek') {
+    if (provider.apiType === 'completions') {
       return {
         model: provider.model,
         prompt: 'x',
@@ -292,31 +261,6 @@ export class OpenAIClient implements ILLMClient {
         max_tokens: 1,
         temperature: provider.temperature,
         stop: provider.stopTokens,
-        stream: false,
-      };
-    }
-
-    if (provider.apiType === 'completions') {
-      const prompt = provider.fimTemplate
-        ? this.applyFIMTemplate(provider.fimTemplate, {
-            prefix: 'x',
-            suffix: '',
-            language: 'plaintext',
-            filename: 'connection-test.txt',
-          })
-        : this.applyFIMTemplate(DEFAULT_COMPLETIONS_FIM_TEMPLATE, {
-            prefix: 'x',
-            suffix: '',
-            language: 'plaintext',
-            filename: 'connection-test.txt',
-          });
-
-      return {
-        model: provider.model,
-        prompt,
-        max_tokens: 1,
-        temperature: provider.temperature,
-        stop: this.mergeStopTokens(provider.stopTokens, this.getFIMStopTokens(provider)),
         stream: false,
       };
     }
@@ -460,10 +404,9 @@ export class OpenAIClient implements ILLMClient {
 
   private getRequestUrl(apiType: ApiType, baseUrl: string): string {
     const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
-    if (apiType === 'chat') {
-      return `${normalizedBaseUrl}/chat/completions`;
-    }
-    return `${normalizedBaseUrl}/completions`;
+    return apiType === 'completions'
+      ? `${normalizedBaseUrl}/completions`
+      : `${normalizedBaseUrl}/chat/completions`;
   }
 
   private buildHeaders(provider: ProviderConfig): Record<string, string> {
